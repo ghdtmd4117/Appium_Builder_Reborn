@@ -1,41 +1,64 @@
-# Visual Studio
+# Visual Studio / .NET
 .vs/
+**/.vs/
+bin/
+**/bin/
+obj/
+**/obj/
 *.user
 *.suo
 *.userosscache
 *.sln.docstates
 
-# Build output
-bin/
-obj/
-[Bb]uild/
-[Dd]ebug/
-[Rr]elease/
-
-# Tests
+# Test output
 TestResults/
+**/TestResults/
+coverage/
+*.coverage
+*.coveragexml
 
-# Runtime artifacts
+# Runtime logs / generated automation data
+ADB_Logs/
+ADS_Logs/
 logs/
-log/
+artifacts/
 screenshots/
 recordings/
-artifacts/
+**/bot_status.txt
+**/bot_error.log
+**/python_crash.log
+**/appium_macro.py
+**/test_history.json
+**/test_history.json.bak
+**/selected_device.txt
+**/retention_settings.json
+**/dashboard_path.txt
 
-# Python
-__pycache__/
-*.pyc
-.pytest_cache/
-.venv/
-venv/
-
-# Secrets / local settings
+# Secrets / local-only settings
+**/gemini_key.dat
+**/gemini_key.txt
 .env
 .env.*
 secrets.json
 appsettings.local.json
 
-# OS
+# Python cache / virtual environments
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+**/.pytest_cache/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
 Thumbs.db
 Desktop.ini
-.DS_Store
+.idea/
+.vscode/
+
+# Temporary files
+*.tmp
+*.bak
+*.log

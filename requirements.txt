@@ -1,0 +1,5 @@
+# R6: major-version bounds reduce surprise breakage while allowing security fixes.
+Appium-Python-Client>=4.5,<6
+selenium>=4.25,<5
+opencv-python>=4.10,<5
+pytest>=8,<9
