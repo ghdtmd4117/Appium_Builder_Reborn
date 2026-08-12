@@ -1,0 +1,45 @@
+name: Bootstrap public source
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.bootstrap/**'
+      - '.github/workflows/bootstrap-source.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct source archive
+        shell: bash
+        run: |
+          cat .bootstrap/source.b64.part* > /tmp/source.b64
+          base64 --decode /tmp/source.b64 > /tmp/source.zip
+          echo "ebb8ebcc93e5e7968d9658afb81e8b385d65503a22a6b4a391978b90b02066e0  /tmp/source.zip" | sha256sum -c -
+          mkdir -p /tmp/appium-source
+          unzip -q /tmp/source.zip -d /tmp/appium-source
+
+      - name: Publish source tree
+        shell: bash
+        run: |
+          cp -a /tmp/appium-source/. .
+          rm -rf .bootstrap
+          rm -f .github/workflows/bootstrap-source.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+            exit 0
+          fi
+          git commit -m "Add Appium Builder Reborn public source"
+          git push origin HEAD:main
