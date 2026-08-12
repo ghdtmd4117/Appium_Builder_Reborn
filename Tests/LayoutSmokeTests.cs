@@ -40,6 +40,19 @@ public sealed class LayoutSmokeTests
                 // 테스트 창은 화면 밖에 표시하여 사용자를 방해하지 않으면서 실제 WinForms 레이아웃을 검증한다.
                 form.Show();
                 Application.DoEvents();
+
+                // 실제 앱은 기기 연결 화면에서 시작하므로 메인 작업공간이 아직 숨겨져 있다.
+                // 이 테스트의 대상은 연결 화면이 아니라 Home/Log/Util/Auto의 반응형 레이아웃이다.
+                Type mainFormType = typeof(MainForm);
+                var connectPanel = (Panel?)mainFormType.GetField("pnlConnect", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(form);
+                var mainPanel = (Panel?)mainFormType.GetField("pnlMain", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(form);
+                Assert.NotNull(connectPanel);
+                Assert.NotNull(mainPanel);
+                connectPanel!.Visible = false;
+                mainPanel!.Visible = true;
+                mainPanel.BringToFront();
+                Application.DoEvents();
+
                 foreach (Size size in new[]
                 {
                     new Size(1024, 680),
