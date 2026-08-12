@@ -6,10 +6,10 @@
 
 시나리오 작성부터 Android Device 연결, Appium Server 실행, 자동화 테스트, Logcat 확인, 화면 녹화, PASS / FAIL 분석까지 하나의 프로그램에서 처리할 수 있도록 구성했습니다.
 
-<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/1a421895-8ad3-4781-9923-e30ddde77247" />
-<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/466d33a7-48c7-433b-a785-ca492a238623" />
-<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/d0caea13-f1a0-4d87-ae3b-2555c2f59032" />
-<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/cec03bdd-cc17-4baa-8cdc-1fa4ed7ce14b" />
+
+
+
+
 
 ---
 
@@ -262,7 +262,7 @@ Appium Builder Reborn은 단순한 GUI Wrapper가 아니라 UI, Android Device �
 
 ## Home Dashboard
 
-![Home Dashboard](./docs/images/home.png)
+<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/1a421895-8ad3-4781-9923-e30ddde77247" />
 
 현재 Device와 Appium Server의 상태를 확인하고 테스트 실행 현황을 한눈에 확인할 수 있습니다.
 
@@ -279,7 +279,7 @@ Appium Builder Reborn은 단순한 GUI Wrapper가 아니라 UI, Android Device �
 
 ## Log & Media
 
-![Log & Media](./docs/images/log.png)
+<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/466d33a7-48c7-433b-a785-ca492a238623" />
 
 ADB Logcat을 실시간으로 확인하고 Screenshot 및 Screen Recording을 관리하는 화면입니다.
 
@@ -287,7 +287,7 @@ ADB Logcat을 실시간으로 확인하고 Screenshot 및 Screen Recording을 �
 
 ## Utility
 
-![Utility](./docs/images/utility.png)
+<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/d0caea13-f1a0-4d87-ae3b-2555c2f59032" />
 
 Android QA 과정에서 반복적으로 사용하는 기능을 Utility 형태로 통합했습니다.
 
@@ -301,7 +301,7 @@ Android QA 과정에서 반복적으로 사용하는 기능을 Utility 형태로
 
 ## Appium Bot
 
-![Appium Bot](./docs/images/appium-bot.png)
+<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/cec03bdd-cc17-4baa-8cdc-1fa4ed7ce14b" />
 
 프로젝트의 핵심 Workspace입니다.
 
