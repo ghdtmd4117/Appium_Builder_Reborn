@@ -28,7 +28,18 @@ public sealed class LayoutSmokeTests
             {
                 Globals.LogFolder = tempRoot;
                 Globals.ScenarioFolder = Path.Combine(tempRoot, "Scenarios");
-                using var form = new MainForm();
+                using var form = new MainForm
+                {
+                    StartPosition = FormStartPosition.Manual,
+                    Location = new Point(-32000, -32000),
+                    ShowInTaskbar = false
+                };
+
+                // Control.Visible은 부모 Form이 실제로 표시되어야 활성 탭의 자식 컨트롤도 true가 된다.
+                // 테스트 창은 화면 밖에 표시하여 사용자를 방해하지 않으면서 실제 WinForms 레이아웃을 검증한다.
+                form.Show();
+                Application.DoEvents();
+
                 foreach (Size size in new[]
                 {
                     new Size(1024, 680),
