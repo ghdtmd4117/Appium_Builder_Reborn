@@ -4,6 +4,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Windows.Forms;
 using AppiumBuilder;
@@ -39,7 +40,6 @@ public sealed class LayoutSmokeTests
                 // 테스트 창은 화면 밖에 표시하여 사용자를 방해하지 않으면서 실제 WinForms 레이아웃을 검증한다.
                 form.Show();
                 Application.DoEvents();
-
                 foreach (Size size in new[]
                 {
                     new Size(1024, 680),
@@ -105,20 +105,27 @@ public sealed class LayoutSmokeTests
 
                         if (tabName == "Auto")
                         {
-                            Label? appiumHint = Descendants(form).OfType<Label>()
-                                .FirstOrDefault(l => l.Visible && l.Text.StartsWith("Appium Server가 실행 중이어야", StringComparison.Ordinal));
-                            RoundedButton? serverButton = Descendants(form).OfType<RoundedButton>()
-                                .FirstOrDefault(b => b.Visible && (b.Text == "서버 시작" || b.Text == "서버 종료" || b.Text == "실행 중"));
-                            RoundedButton? terminalButton = Descendants(form).OfType<RoundedButton>()
-                                .FirstOrDefault(b => b.Visible && b.Text == "터미널");
+                            Type mainType = typeof(MainForm);
+                            Panel? autoPanel = (Panel?)mainType.GetField("pnlTabAuto", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(form);
+                            RoundedButton? serverButton = (RoundedButton?)mainType.GetField("btnAppiumServerToggle", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(form);
+                            RoundedButton? terminalButton = (RoundedButton?)mainType.GetField("btnAppiumTerminal", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(form);
+                            Label? appiumHint = autoPanel == null
+                                ? null
+                                : Descendants(autoPanel).OfType<Label>()
+                                    .FirstOrDefault(l => l.Text.StartsWith("Appium Server가 실행 중이어야", StringComparison.Ordinal));
 
+                            Assert.NotNull(autoPanel);
                             Assert.NotNull(appiumHint);
                             Assert.NotNull(serverButton);
                             Assert.NotNull(terminalButton);
+                            Assert.True(autoPanel!.Visible, "Appium Bot tab should be visible after activation.");
+                            Assert.True(appiumHint!.Visible, "Appium server hint should be visible on the active Appium Bot tab.");
+                            Assert.True(serverButton!.Visible, "Appium server toggle button should be visible on the active Appium Bot tab.");
+                            Assert.True(terminalButton!.Visible, "Appium terminal button should be visible on the active Appium Bot tab.");
 
-                            Rectangle hintScreen = appiumHint!.RectangleToScreen(appiumHint.ClientRectangle);
-                            Rectangle serverScreen = serverButton!.RectangleToScreen(serverButton.ClientRectangle);
-                            Rectangle terminalScreen = terminalButton!.RectangleToScreen(terminalButton.ClientRectangle);
+                            Rectangle hintScreen = appiumHint.RectangleToScreen(appiumHint.ClientRectangle);
+                            Rectangle serverScreen = serverButton.RectangleToScreen(serverButton.ClientRectangle);
+                            Rectangle terminalScreen = terminalButton.RectangleToScreen(terminalButton.ClientRectangle);
 
                             Assert.True(hintScreen.Top >= Math.Min(serverScreen.Bottom, terminalScreen.Bottom) - 2,
                                 "Appium server hint must be placed on a second row below the server controls.");
@@ -142,7 +149,7 @@ public sealed class LayoutSmokeTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         thread.Join();
-        if (captured != null) throw captured;
+        if (captured != null) ExceptionDispatchInfo.Capture(captured).Throw();
     }
 
     private static void ActivateTab(MainForm form, string suffix)
