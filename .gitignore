@@ -1,0 +1,41 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build output
+bin/
+obj/
+[Bb]uild/
+[Dd]ebug/
+[Rr]elease/
+
+# Tests
+TestResults/
+
+# Runtime artifacts
+logs/
+log/
+screenshots/
+recordings/
+artifacts/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets / local settings
+.env
+.env.*
+secrets.json
+appsettings.local.json
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
