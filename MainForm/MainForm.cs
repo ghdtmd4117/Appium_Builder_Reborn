@@ -94,6 +94,7 @@ namespace AppiumBuilder
             BindEvents();
             RefreshSavedScenariosList();
             SwitchTab(pnlTabHome, btnTabHome);
+            _ = LocalAiRuntimeManager.TryAutoStartAsync();
         }
 
         // ===== 사이드바 안의 이름 없는 컨트롤(점, 글씨)을 찾아내어 동기화하는 스마트 로직 =====
@@ -289,6 +290,7 @@ namespace AppiumBuilder
             AdbEngine.TryKill(dashboardProcess);
             AdbEngine.TryKill(botRecordingProcess);
             if (stopOwnedAppiumServer) AppiumServerManager.StopOwnedServer(out _);
+            LocalAiRuntimeManager.StopOwnedServer(out _);
 
             if (isRecording || isSoloRecording || botRecordingProcess != null)
             {

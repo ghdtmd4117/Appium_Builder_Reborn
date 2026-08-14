@@ -20,6 +20,21 @@ namespace AppiumBuilder.Tests
             Assert.Equal(expected, LocalOnlyLlmClient.IsLoopbackEndpoint(endpoint));
         }
 
+
+        [Fact]
+        public void EmbeddedLocalAiRuntime_UsesPinnedOfficialAndLoopbackConfiguration()
+        {
+            var endpoint = new Uri(LocalAiRuntimeManager.Endpoint);
+
+            Assert.True(endpoint.IsLoopback);
+            Assert.Equal("127.0.0.1", endpoint.Host);
+            Assert.Equal(11434, endpoint.Port);
+            Assert.Equal("github.com", LocalAiRuntimeManager.RuntimeDownloadUri.Host);
+            Assert.Equal(Uri.UriSchemeHttps, LocalAiRuntimeManager.RuntimeDownloadUri.Scheme);
+            Assert.Equal(64, LocalAiRuntimeManager.RuntimeSha256.Length);
+            Assert.Equal("qwen3:4b-instruct", LocalAiRuntimeManager.DefaultModel);
+        }
+
         [Fact]
         public void RuleDraft_CreatesPositiveNegativeAndBoundaryCases()
         {

@@ -17,6 +17,7 @@ namespace AppiumBuilder.UI
         private readonly TextBox txtTemplate;
         private readonly TextBox txtLocalEndpoint;
         private readonly TextBox txtLocalModel;
+        private Label lblLocalAiState = null!;
         private readonly DataGridView grid;
         private readonly Label lblStatus;
         private readonly BindingList<LocalTestCase> rows = new();
@@ -75,8 +76,8 @@ namespace AppiumBuilder.UI
             inputGrid.Controls.Add(BuildRequirementCard(), 0, 0);
 
             txtTemplate = CreateReadOnlyTextBox("기본 TC 양식");
-            txtLocalEndpoint = CreateTextBox("http://127.0.0.1:11434");
-            txtLocalModel = CreateTextBox(string.Empty);
+            txtLocalEndpoint = CreateReadOnlyTextBox("자동 관리 · " + LocalAiRuntimeManager.Endpoint);
+            txtLocalModel = CreateReadOnlyTextBox("Qwen3 4B · 자동 준비");
             inputGrid.Controls.Add(BuildLocalSettingsCard(), 1, 0);
             root.Controls.Add(inputGrid, 0, 1);
 
@@ -98,6 +99,12 @@ namespace AppiumBuilder.UI
             root.Controls.Add(lblStatus, 0, 4);
 
             Controls.Add(root);
+
+            Shown += async (_, _) =>
+            {
+                await LocalAiRuntimeManager.TryAutoStartAsync();
+                await RefreshLocalAiStatusAsync();
+            };
         }
 
         private Control BuildHeader()
@@ -208,7 +215,7 @@ namespace AppiumBuilder.UI
 
             var title = new Label
             {
-                Text = "로컬 생성 설정",
+                Text = "로컬 AI 설정 · 자동 관리",
                 Dock = DockStyle.Fill,
                 Font = Globals.FontHeading,
                 ForeColor = Globals.TextPrimary,
@@ -233,7 +240,6 @@ namespace AppiumBuilder.UI
             modelRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102));
             modelRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             modelRow.Controls.Add(Caption("모델명"), 0, 0);
-            txtLocalModel.PlaceholderText = "예: qwen2.5:7b (설치된 모델)";
             modelRow.Controls.Add(txtLocalModel, 1, 0);
             layout.Controls.Add(modelRow, 0, 3);
             layout.SetColumnSpan(modelRow, 2);
@@ -261,7 +267,7 @@ namespace AppiumBuilder.UI
 
             var btnTemplate = CreateButton("CSV 양식 불러오기", Globals.Surface, Globals.TextSecondary);
             var btnDraft = CreateButton("규칙 기반 초안", Globals.AccentSoft, Globals.Accent);
-            var btnLocalAi = CreateButton("로컬 LLM 생성", Globals.Accent, Color.White);
+            var btnLocalAi = CreateButton("AI TC 자동 생성", Globals.Accent, Color.White);
             var btnDelete = CreateButton("선택 삭제", Globals.Surface, Globals.Danger);
             var btnExport = CreateButton("CSV 내보내기", Globals.Surface, Globals.TextPrimary);
 
@@ -275,15 +281,16 @@ namespace AppiumBuilder.UI
             layout.Controls.Add(btnDraft, 1, 0);
             layout.Controls.Add(btnLocalAi, 2, 0);
             layout.Controls.Add(btnDelete, 3, 0);
-            layout.Controls.Add(new Label
+            lblLocalAiState = new Label
             {
-                Text = "로컬 LLM은 localhost만 허용하며 Redirect/Proxy를 사용하지 않습니다.",
+                Text = "○ 로컬 AI 상태 확인 중...",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = Globals.TextMuted,
                 Font = Globals.FontMuted,
                 Padding = new Padding(10, 0, 4, 0)
-            }, 4, 0);
+            };
+            layout.Controls.Add(lblLocalAiState, 4, 0);
             layout.Controls.Add(btnExport, 5, 0);
             return layout;
         }
@@ -370,58 +377,155 @@ namespace AppiumBuilder.UI
             lblStatus.ForeColor = Globals.Success;
         }
 
+        private async Task RefreshLocalAiStatusAsync()
+        {
+            try
+            {
+                LocalAiRuntimeManager.Status status = await LocalAiRuntimeManager.GetStatusAsync();
+                if (status.Ready)
+                {
+                    lblLocalAiState.Text = $"● 로컬 AI 준비됨 · {LocalAiRuntimeManager.DefaultModel}";
+                    lblLocalAiState.ForeColor = Globals.Success;
+                }
+                else if (status.ServerRunning)
+                {
+                    lblLocalAiState.Text = "○ 로컬 AI 모델 준비 필요 · 버튼 클릭 시 자동 준비";
+                    lblLocalAiState.ForeColor = Globals.Warning;
+                }
+                else if (status.RuntimeAvailable)
+                {
+                    lblLocalAiState.Text = "○ 로컬 AI 엔진 대기 · 버튼 클릭 시 자동 시작";
+                    lblLocalAiState.ForeColor = Globals.Info;
+                }
+                else
+                {
+                    lblLocalAiState.Text = "○ 최초 1회 로컬 AI 준비 필요 · 설치 작업 없음";
+                    lblLocalAiState.ForeColor = Globals.TextMuted;
+                }
+            }
+            catch
+            {
+                lblLocalAiState.Text = "○ 로컬 AI 상태 확인 대기";
+                lblLocalAiState.ForeColor = Globals.TextMuted;
+            }
+        }
+
         private async Task GenerateWithLocalModelAsync(Button button)
         {
             if (string.IsNullOrWhiteSpace(txtRequirement.Text))
             {
-                MessageBox.Show(this, "요구사항을 먼저 입력해주세요.", "로컬 LLM", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-            if (!LocalOnlyLlmClient.IsLoopbackEndpoint(txtLocalEndpoint.Text.Trim()))
-            {
-                MessageBox.Show(this,
-                    "보안상 localhost / 127.0.0.1 / ::1 주소만 허용됩니다.\n외부 IP나 도메인은 이 기능에서 사용할 수 없습니다.",
-                    "외부 연결 차단",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
-            }
-            if (string.IsNullOrWhiteSpace(txtLocalModel.Text))
-            {
-                MessageBox.Show(this, "PC에 설치된 로컬 모델명을 입력해주세요.", "로컬 LLM", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, "요구사항을 먼저 입력해주세요.", "AI TC 자동 생성", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
             string original = button.Text;
             button.Enabled = false;
-            button.Text = "로컬 생성 중...";
-            lblStatus.Text = "localhost 로컬 모델에만 요청 중 · 외부 Redirect/Proxy 차단";
-            lblStatus.ForeColor = Globals.Info;
 
             try
             {
+                LocalAiRuntimeManager.Status status = await LocalAiRuntimeManager.GetStatusAsync();
+                if (!status.Ready)
+                {
+                    bool runtimeDownloadNeeded = !status.ServerRunning && status.NeedsRuntimeDownload;
+                    bool modelDownloadNeeded = !status.ModelAvailable;
+                    if (runtimeDownloadNeeded || modelDownloadNeeded)
+                    {
+                        string downloadInfo = runtimeDownloadNeeded && modelDownloadNeeded
+                            ? "• Ollama standalone runtime 약 1.4GB\n• QA용 Qwen3 4B 모델 약 2.5GB"
+                            : runtimeDownloadNeeded
+                                ? "• Ollama standalone runtime 약 1.4GB"
+                                : "• QA용 Qwen3 4B 모델 약 2.5GB";
+
+                        DialogResult answer = MessageBox.Show(
+                            this,
+                            "로컬 AI가 아직 준비되지 않았습니다.\n\n" +
+                            "[처음 한 번만]\n" + downloadInfo + "\n\n" +
+                            "프로그램이 공식 파일을 자동으로 내려받고 설정합니다.\n" +
+                            "설치 프로그램은 실행하지 않으며 TC 내용은 다운로드 과정에 전송되지 않습니다.\n\n" +
+                            "지금 준비할까요?",
+                            "로컬 AI 준비",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Question);
+
+                        if (answer != DialogResult.Yes)
+                        {
+                            lblStatus.Text = "로컬 AI 준비를 건너뜀 · 규칙 기반 초안은 바로 사용할 수 있습니다.";
+                            lblStatus.ForeColor = Globals.TextMuted;
+                            return;
+                        }
+                    }
+
+                    button.Text = "AI 준비 중...";
+                    lblLocalAiState.Text = "○ 로컬 AI 준비 중...";
+                    lblLocalAiState.ForeColor = Globals.Info;
+
+                    var progress = new Progress<LocalAiRuntimeManager.ProgressInfo>(info =>
+                    {
+                        string percent = info.Percent.HasValue ? $" · {info.Percent.Value}%" : string.Empty;
+                        lblStatus.Text = info.Detail + percent;
+                        lblStatus.ForeColor = Globals.Info;
+                        lblLocalAiState.Text = "○ " + info.Detail + percent;
+                        lblLocalAiState.ForeColor = Globals.Info;
+                    });
+
+                    var ready = await LocalAiRuntimeManager.EnsureReadyAsync(progress);
+                    if (!ready.Success)
+                    {
+                        IReadOnlyList<LocalTestCase> fallback = LocalTestCaseEngine.BuildRuleBasedDraft(txtRequirement.Text);
+                        if (fallback.Count > 0) ReplaceRows(fallback);
+
+                        lblStatus.Text = $"로컬 AI 준비 실패 → 규칙 기반 초안 {fallback.Count}건 생성";
+                        lblStatus.ForeColor = Globals.Warning;
+                        lblLocalAiState.Text = "○ 로컬 AI 준비 필요";
+                        lblLocalAiState.ForeColor = Globals.Warning;
+
+                        MessageBox.Show(
+                            this,
+                            ready.Message + "\n\n규칙 기반 초안으로 대신 생성했습니다.",
+                            "로컬 AI 준비 안내",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information);
+                        return;
+                    }
+                }
+
+                button.Text = "AI 생성 중...";
+                lblStatus.Text = $"{LocalAiRuntimeManager.DefaultModel} 로컬 분석 중 · TC 내용은 127.0.0.1 안에서만 처리";
+                lblStatus.ForeColor = Globals.Info;
+
                 using var client = new LocalOnlyLlmClient();
                 IReadOnlyList<LocalTestCase> generated = await client.GenerateWithOllamaAsync(
-                    txtLocalEndpoint.Text.Trim(),
-                    txtLocalModel.Text.Trim(),
+                    LocalAiRuntimeManager.Endpoint,
+                    LocalAiRuntimeManager.DefaultModel,
                     txtRequirement.Text,
                     template.Columns);
 
-                if (generated.Count == 0) throw new InvalidDataException("로컬 모델이 유효한 TC를 만들지 못했습니다.");
+                if (generated.Count == 0) throw new InvalidDataException("로컬 AI가 유효한 TC를 만들지 못했습니다.");
                 ReplaceRows(generated);
-                lblStatus.Text = $"로컬 LLM TC {generated.Count}건 생성 완료 · 외부 API 사용 없음";
+                lblStatus.Text = $"AI TC {generated.Count}건 생성 완료 · 외부 AI/API 전송 없음";
                 lblStatus.ForeColor = Globals.Success;
+                lblLocalAiState.Text = $"● 로컬 AI 준비됨 · {LocalAiRuntimeManager.DefaultModel}";
+                lblLocalAiState.ForeColor = Globals.Success;
             }
             catch (Exception ex)
             {
-                lblStatus.Text = "로컬 LLM 생성 실패 · 데이터는 외부로 전송되지 않았습니다.";
-                lblStatus.ForeColor = Globals.Danger;
-                MessageBox.Show(this, ex.Message, "로컬 LLM 생성 실패", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                IReadOnlyList<LocalTestCase> fallback = LocalTestCaseEngine.BuildRuleBasedDraft(txtRequirement.Text);
+                if (fallback.Count > 0) ReplaceRows(fallback);
+
+                lblStatus.Text = $"AI 생성 문제 → 규칙 기반 초안 {fallback.Count}건으로 자동 전환";
+                lblStatus.ForeColor = Globals.Warning;
+                MessageBox.Show(
+                    this,
+                    "로컬 AI 응답에 문제가 있어 규칙 기반 초안으로 자동 전환했습니다.\n\n" + ex.Message,
+                    "AI TC 자동 생성",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
             }
             finally
             {
                 button.Text = original;
                 button.Enabled = true;
+                await RefreshLocalAiStatusAsync();
             }
         }
 
