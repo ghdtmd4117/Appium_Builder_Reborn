@@ -1263,71 +1263,8 @@ namespace AppiumBuilder
                 }
             };
 
-            btnAiAnalyze.Click += async (_, _) =>
-            {
-                string prompt = GetText(txtAiPrompt);
-                if (string.IsNullOrWhiteSpace(prompt))
-                {
-                    MessageBox.Show("명령을 입력해주세요.");
-                    return;
-                }
+            btnAiAnalyze.Click += async (_, _) => await RunSmartAiAssistantAsync();
 
-                btnAiAnalyze.Enabled = false;
-                string originalText = btnAiAnalyze.Text;
-                btnAiAnalyze.Text = "분석 중...";
-                try
-                {
-                    List<string>? steps = null;
-                    bool usedFallback = false;
-                    if (await System.Threading.Tasks.Task.Run(AdbEngine.IsDeviceConnected))
-                    {
-                        string apiKey = GetOrAskGeminiKey();
-                        if (!string.IsNullOrWhiteSpace(apiKey))
-                        {
-                            try
-                            {
-                                string dumpPath = Path.Combine(SysPath, "window_dump.xml");
-                                await AdbEngine.RunCommandAsync("shell uiautomator dump /sdcard/window_dump.xml", 10000);
-                                await AdbEngine.RunCommandAsync($"pull /sdcard/window_dump.xml \"{dumpPath}\"", 15000);
-                                await AdbEngine.RunCommandAsync("shell rm /sdcard/window_dump.xml", 5000);
-                                if (File.Exists(dumpPath))
-                                {
-                                    string dump = File.ReadAllText(dumpPath);
-                                    dump = RedactUiDumpForAi(dump);
-                                    if (dump.Length > 30000) dump = dump.Substring(0, 30000);
-                                    steps = await CallGeminiForSteps(apiKey, prompt, dump);
-                                }
-                            }
-                            catch
-                            {
-                                steps = null;
-                            }
-                        }
-                    }
-
-                    if (steps == null || steps.Count == 0)
-                    {
-                        steps = AnalyzePromptToSteps(prompt);
-                        usedFallback = steps.Count > 0;
-                    }
-                    if (steps == null || steps.Count == 0)
-                    {
-                        MessageBox.Show("문장에서 동작을 인식하지 못했습니다.");
-                        return;
-                    }
-
-                    foreach (string step in steps) lstSteps.Items.Add(step);
-                    txtAiPrompt.Text = txtAiPrompt.Tag?.ToString() ?? string.Empty;
-                    txtAiPrompt.ForeColor = Globals.TextFaint;
-                    if (usedFallback)
-                        lblStatusMsg.Text = "상태: 오프라인 규칙 기반 분석으로 단계를 추가했습니다.";
-                }
-                finally
-                {
-                    btnAiAnalyze.Enabled = true;
-                    btnAiAnalyze.Text = originalText;
-                }
-            };
         }
 
         private RoundedPanel CreateAppiumServerControlBar()
