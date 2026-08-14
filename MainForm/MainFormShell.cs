@@ -104,7 +104,7 @@ namespace AppiumBuilder
             {
                 Text = "Appium Builder Reborn",
                 Location = new Point(82, 25),
-                Size = new Size(410, 28),
+                Size = new Size(276, 28),
                 Font = Globals.FontHeading,
                 ForeColor = Globals.TextPrimary,
                 TextAlign = ContentAlignment.MiddleLeft
@@ -113,10 +113,27 @@ namespace AppiumBuilder
             {
                 Text = "Android · Appium · ADB 기반 QA 자동화",
                 Location = new Point(82, 54),
-                Size = new Size(410, 22),
+                Size = new Size(276, 22),
                 Font = Globals.FontMuted,
                 ForeColor = Globals.TextMuted,
                 TextAlign = ContentAlignment.MiddleLeft
+            };
+            var btnLocalTcEntry = CreateModernButton(
+                "로컬 TC",
+                Globals.SurfaceAlt,
+                370,
+                36,
+                134,
+                36,
+                "archive");
+            btnLocalTcEntry.ForeColor = Globals.Accent;
+            btnLocalTcEntry.IconColor = Globals.Accent;
+            btnLocalTcEntry.BorderColor = Globals.Border;
+            btnLocalTcEntry.BorderThickness = 1;
+            btnLocalTcEntry.Click += (_, _) =>
+            {
+                using var form = new LocalTestCaseBuilderForm();
+                form.ShowDialog(this);
             };
             var connDivider = new Panel
             {
@@ -462,6 +479,7 @@ namespace AppiumBuilder
                 brandIcon,
                 lblProduct,
                 lblProductMeta,
+                btnLocalTcEntry,
                 connDivider,
                 lblConnTitle,
                 lblConnDescription,
@@ -544,12 +562,19 @@ namespace AppiumBuilder
             btnTabLog = CreateMenuButton("로그/미디어", "terminal", 48);
             btnTabUtil = CreateMenuButton("유틸리티", "tools", 96);
             btnTabAuto = CreateMenuButton("Appium 봇", "appium", 144);
+            var btnLocalTc = CreateMenuButton("로컬 TC", "archive", 192);
+            btnLocalTc.Click += (_, _) =>
+            {
+                using var form = new LocalTestCaseBuilderForm();
+                form.ShowDialog(this);
+            };
             navPanel.Controls.AddRange(new Control[]
             {
                 btnTabHome,
                 btnTabLog,
                 btnTabUtil,
                 btnTabAuto,
+                btnLocalTc,
                 navIndicator
             });
             navIndicator.BringToFront();

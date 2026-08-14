@@ -35,7 +35,7 @@ namespace AppiumBuilder
             };
             root.ColumnStyles.Add(ColPct(100));
             root.RowStyles.Add(Abs(88));
-            root.RowStyles.Add(Abs(136));
+            root.RowStyles.Add(Abs(152));
             root.RowStyles.Add(Abs(116));
             root.RowStyles.Add(Pct(100));
             root.RowStyles.Add(Abs(108));
@@ -120,7 +120,7 @@ namespace AppiumBuilder
                     ReflowEqualGrid(statGrid, 4, statCards);
                     ReflowEqualGrid(quickGrid, 4, quickActions);
                     SetAbsoluteRow(root, 0, 88);
-                    SetAbsoluteRow(root, 1, 136);
+                    SetAbsoluteRow(root, 1, 152);
                     SetAbsoluteRow(root, 2, 116);
                     SetPercentRow(root, 3);
                     SetAbsoluteRow(root, 4, 108);
@@ -134,7 +134,7 @@ namespace AppiumBuilder
                     ReflowEqualGrid(statGrid, 2, statCards);
                     ReflowEqualGrid(quickGrid, narrow ? 1 : 2, quickActions);
                     SetAbsoluteRow(root, 0, 88);
-                    SetAbsoluteRow(root, 1, narrow ? 390 : 136);
+                    SetAbsoluteRow(root, 1, narrow ? 438 : 152);
                     SetAbsoluteRow(root, 2, 226);
                     SetAbsoluteRow(root, 3, 310);
                     SetAbsoluteRow(root, 4, narrow ? 340 : 196);
@@ -217,7 +217,7 @@ namespace AppiumBuilder
             grid.ColumnStyles.Add(ColPct(100));
             grid.RowStyles.Add(Abs(22));
             grid.RowStyles.Add(Abs(34));
-            grid.RowStyles.Add(Pct(100));
+            grid.RowStyles.Add(Abs(50));
             var iconBox = new RoundedPanel
             {
                 Dock = DockStyle.Fill,
