@@ -550,7 +550,7 @@ namespace AppiumBuilder
             else if (locator == "AccessibilityID") grounded = context.AccessibilityLabels.Contains(target);
             else
             {
-                Match match = Regex.Match(target, @"contains\(@(?:text|content-desc),\s*['\"](?<value>[^'\"]+)['\"]\)", RegexOptions.IgnoreCase);
+                Match match = Regex.Match(target, @"contains\(@(?:text|content-desc),\s*['""](?<value>[^'""]+)['""]\)", RegexOptions.IgnoreCase);
                 if (match.Success)
                 {
                     string token = match.Groups["value"].Value;
