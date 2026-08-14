@@ -1,0 +1,31 @@
+name: Apply Local TC Studio guides and planning docs
+
+on:
+  push:
+    branches: [ feature/local-tc-studio-guides-docs ]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feature/local-tc-studio-guides-docs
+      - name: Apply prepared source files
+        shell: bash
+        run: |
+          tar -xzf .tmp/tcstudio_patch.tgz
+          rm -rf .tmp
+          rm -f .github/workflows/apply-local-tc-studio.yml
+      - name: Commit source changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add AppiumBuilder.csproj Core/LocalAiRuntimeManager.cs Core/LocalTestCaseEngine.cs Core/LocalPlanningDocument.cs Core/TcGenerationGuideStore.cs UI/LocalTestCaseBuilderForm.cs Tests/LocalTestCaseEngineTests.cs .github/workflows/apply-local-tc-studio.yml .tmp || true
+          git commit -m "Add guide-driven planning document TC studio"
+          git push origin HEAD:feature/local-tc-studio-guides-docs
