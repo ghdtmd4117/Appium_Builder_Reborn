@@ -23,7 +23,7 @@ namespace AppiumBuilder.Core
         public const string Host = "127.0.0.1";
         public const int Port = 11434;
         public const string Endpoint = "http://127.0.0.1:11434";
-        public const string DefaultModel = "qwen3:4b-instruct";
+        public const string DefaultModel = "qwen3-vl:4b";
 
         // 재현 가능성과 supply-chain 검증을 위해 앱 버전에서 검증된 Ollama release를 고정한다.
         public const string OllamaVersion = "v0.32.5";
@@ -163,7 +163,7 @@ namespace AppiumBuilder.Core
                 {
                     progress?.Report(new ProgressInfo(
                         "model",
-                        $"{DefaultModel} 모델 다운로드 중 · 최초 1회 약 2.5GB"));
+                        $"{DefaultModel} 모델 다운로드 중 · 최초 1회 약 3.3GB"));
 
                     bool pulled = await PullModelAsync(DefaultModel, cancellationToken).ConfigureAwait(false);
                     if (!pulled)

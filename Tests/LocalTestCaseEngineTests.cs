@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Text;
+using System.IO.Compression;
+using System.Threading.Tasks;
 using AppiumBuilder.Core;
 using Xunit;
 
@@ -32,7 +34,7 @@ namespace AppiumBuilder.Tests
             Assert.Equal("github.com", LocalAiRuntimeManager.RuntimeDownloadUri.Host);
             Assert.Equal(Uri.UriSchemeHttps, LocalAiRuntimeManager.RuntimeDownloadUri.Scheme);
             Assert.Equal(64, LocalAiRuntimeManager.RuntimeSha256.Length);
-            Assert.Equal("qwen3:4b-instruct", LocalAiRuntimeManager.DefaultModel);
+            Assert.Equal("qwen3-vl:4b", LocalAiRuntimeManager.DefaultModel);
         }
 
         [Fact]
@@ -80,6 +82,48 @@ namespace AppiumBuilder.Tests
             {
                 try { Directory.Delete(folder, true); } catch { }
             }
+        }
+
+
+        [Fact]
+        public async Task PlanningDocumentReader_ExtractsPptxSlideTextLocally()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "AppiumBuilderTests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            string path = Path.Combine(folder, "plan.pptx");
+            try
+            {
+                using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+                {
+                    ZipArchiveEntry entry = zip.CreateEntry("ppt/slides/slide1.xml");
+                    await using Stream stream = entry.Open();
+                    await using var writer = new StreamWriter(stream, Encoding.UTF8);
+                    await writer.WriteAsync("<p:sld xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>로그인 화면</a:t></a:r></a:p><a:p><a:r><a:t>비밀번호 5회 실패 시 잠금</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>");
+                }
+
+                LocalPlanningDocument document = await LocalPlanningDocumentReader.ReadAsync(path);
+
+                Assert.Equal("PPTX", document.Kind);
+                Assert.Equal(1, document.UnitCount);
+                Assert.Contains("로그인 화면", document.ExtractedText);
+                Assert.Contains("5회 실패", document.ExtractedText);
+            }
+            finally
+            {
+                try { Directory.Delete(folder, true); } catch { }
+            }
+        }
+
+        [Theory]
+        [InlineData("plan.pptx", true)]
+        [InlineData("plan.pdf", true)]
+        [InlineData("screen.png", true)]
+        [InlineData("screen.jpg", true)]
+        [InlineData("legacy.ppt", false)]
+        [InlineData("plan.docx", false)]
+        public void PlanningDocumentReader_RecognizesSupportedFormats(string fileName, bool expected)
+        {
+            Assert.Equal(expected, LocalPlanningDocumentReader.IsSupported(fileName));
         }
     }
 }

@@ -11,6 +11,9 @@
     <EmbeddedResource Include="MainForm\MainForm.resx" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="PdfPig" Version="0.1.15" />
+  </ItemGroup>
+  <ItemGroup>
     <Content Include="Dashboard\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
