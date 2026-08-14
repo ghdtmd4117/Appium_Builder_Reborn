@@ -756,7 +756,7 @@ namespace AppiumBuilder
                 lblStatusMsg.Text = "상태: 기존 Appium 대시보드 시작 중...";
                 lblStatusMsg.ForeColor = Globals.Info;
 
-                Task.Run(async () =>
+                _ = Task.Run(async () =>
                 {
                     await Task.Delay(4000);
                     try

@@ -14,8 +14,8 @@ namespace AppiumBuilder
 {
     public partial class MainForm
     {
-        private System.Windows.Forms.Timer liveTimer;
-        private RichTextBox rtbLiveConsole;
+        private System.Windows.Forms.Timer liveTimer = null!;
+        private RichTextBox rtbLiveConsole = null!;
         private int lastLineCount = 0;  // [수정] 바이트 계산 대신 안전한 라인 수 기반으로 변경!
 
         private static bool legacyDataMigrationAttempted;
@@ -1558,7 +1558,7 @@ namespace AppiumBuilder
             }
         }
 
-        private async void BtnRunChecked_Click(object sender, EventArgs e)
+        private async void BtnRunChecked_Click(object? sender, EventArgs e)
         {
             var checkedFiles = new List<string>();
             foreach (Control ctrl in pnlSavedScenarios.Controls)

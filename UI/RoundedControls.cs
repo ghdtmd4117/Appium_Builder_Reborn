@@ -533,7 +533,7 @@ namespace AppiumBuilder.UI
             Color fill = selected ? Globals.AccentSoft : BackColor;
             using var brush = new SolidBrush(fill);
             e.Graphics.FillRectangle(brush, e.Bounds);
-            string text = GetItemText(Items[e.Index]);
+            string text = GetItemText(Items[e.Index]) ?? string.Empty;
             TextRenderer.DrawText(
                 e.Graphics,
                 text,

@@ -77,8 +77,6 @@ namespace AppiumBuilder
         private Label lblStatTotal = null!, lblStatPass = null!, lblStatFail = null!, lblStatRate = null!;
         private Panel pnlRecentRuns = null!;
         private Label lblHomeConn = null!, lblHomeModel = null!, lblHomeOs = null!;
-        private Label lblTrendRuns = null!, lblTrendPass = null!, lblTrendFail = null!, lblTopFailure = null!, lblLatestRun = null!;
-        private WeeklyTrendChart weeklyTrendChart = null!;
         private RoundedPanel dotHomeConn = null!;
 
         // 로그/미디어 상태 표시용
