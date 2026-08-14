@@ -187,6 +187,10 @@ namespace AppiumBuilder.Core
 
     public sealed class LocalOnlyLlmClient : IDisposable
     {
+        private const int MaxCombinedDocumentTextChars = 120_000;
+        private const int MaxVisionImages = 10;
+        private const int MaxSingleVisionImageBytes = 12 * 1024 * 1024;
+
         private readonly HttpClient _client;
 
         public LocalOnlyLlmClient()
@@ -198,7 +202,7 @@ namespace AppiumBuilder.Core
             };
             _client = new HttpClient(handler)
             {
-                Timeout = TimeSpan.FromSeconds(90)
+                Timeout = TimeSpan.FromMinutes(8)
             };
         }
 
@@ -209,19 +213,41 @@ namespace AppiumBuilder.Core
                 && uri.IsLoopback;
         }
 
-        public async Task<IReadOnlyList<LocalTestCase>> GenerateWithOllamaAsync(
+        public Task<IReadOnlyList<LocalTestCase>> GenerateWithOllamaAsync(
             string endpoint,
             string model,
             string requirement,
             IReadOnlyList<string> templateColumns,
             CancellationToken cancellationToken = default)
         {
+            return GenerateWithOllamaAsync(
+                endpoint,
+                model,
+                requirement,
+                string.Empty,
+                templateColumns,
+                Array.Empty<LocalPlanningDocument>(),
+                cancellationToken);
+        }
+
+        public async Task<IReadOnlyList<LocalTestCase>> GenerateWithOllamaAsync(
+            string endpoint,
+            string model,
+            string requirement,
+            string generationGuide,
+            IReadOnlyList<string> templateColumns,
+            IReadOnlyList<LocalPlanningDocument> documents,
+            CancellationToken cancellationToken = default)
+        {
             if (!IsLoopbackEndpoint(endpoint))
                 throw new InvalidOperationException("보안 정책상 로컬 TC 생성기는 localhost/127.0.0.1/::1 주소에만 연결할 수 있습니다.");
             if (string.IsNullOrWhiteSpace(model))
-                throw new InvalidOperationException("로컬 모델명을 입력해주세요.");
-            if (string.IsNullOrWhiteSpace(requirement))
-                throw new InvalidOperationException("TC를 만들 요구사항을 입력해주세요.");
+                throw new InvalidOperationException("로컬 모델명이 설정되지 않았습니다.");
+            if (string.IsNullOrWhiteSpace(requirement) && (documents == null || documents.Count == 0))
+                throw new InvalidOperationException("요구사항을 입력하거나 기획서 파일을 추가해주세요.");
+
+            documents ??= Array.Empty<LocalPlanningDocument>();
+            templateColumns ??= LocalTestCaseTemplate.DefaultColumns;
 
             var baseUri = new Uri(endpoint.EndsWith('/') ? endpoint : endpoint + "/", UriKind.Absolute);
             var requestUri = new Uri(baseUri, "api/chat");
@@ -229,27 +255,63 @@ namespace AppiumBuilder.Core
                 throw new InvalidOperationException("로컬 전용 보안 검증에 실패했습니다.");
 
             string system =
-                "You are a QA test-case designer running inside a local-only desktop application. " +
-                "Return JSON only. Never ask to upload files or contact an external service. " +
-                "Create concise, executable test cases that include positive, negative, and boundary coverage when relevant.";
+                "You are a senior QA test-case designer running inside a strictly local-only Windows desktop application. " +
+                "Use only the supplied requirement, planning documents, images and TC generation guide. " +
+                "Never request external uploads, web searches, cloud APIs, or assumptions that are not grounded in the supplied material. " +
+                "If a policy is not specified, express it as a verification point instead of inventing a product rule. " +
+                "Return JSON only. Create practical, executable test cases with positive, negative, boundary, state, permission, error, and recovery coverage when relevant. " +
+                "Follow the user's TC generation guide over your default style.";
+
+            string documentText = BuildDocumentPrompt(documents);
+            string guideText = string.IsNullOrWhiteSpace(generationGuide)
+                ? "(별도 가이드 없음 - 기본 QA 작성 원칙 적용)"
+                : generationGuide.Trim();
+            string requirementText = string.IsNullOrWhiteSpace(requirement)
+                ? "(추가 요구사항 없음 - 첨부 기획서를 기준으로 작성)"
+                : requirement.Trim();
 
             string user =
-                "요구사항:\n" + requirement.Trim() + "\n\n" +
-                "업무 양식 컬럼:\n" + string.Join(", ", templateColumns) + "\n\n" +
-                "다음 JSON 배열 형식으로 3~8개의 TC를 생성하세요:\n" +
+                "[TC 생성 가이드 - 반드시 우선 적용]\n" + guideText + "\n\n" +
+                "[추가 요구사항 / 메모]\n" + requirementText + "\n\n" +
+                "[첨부 기획서에서 로컬 추출한 내용]\n" + documentText + "\n\n" +
+                "[업무 TC 양식 컬럼]\n" + string.Join(", ", templateColumns) + "\n\n" +
+                "작성 규칙:\n" +
+                "1. 기획서의 기능/화면/상태/조건/예외를 먼저 파악하고 테스트 포인트로 변환한다.\n" +
+                "2. 이미지가 첨부되었다면 화면의 버튼, 입력 영역, 문구, 팝업, 상태 변화 등 시각 정보도 근거로 사용한다.\n" +
+                "3. 중복 TC를 만들지 않는다.\n" +
+                "4. 각 TC는 혼자 실행 가능한 수준으로 사전조건/절차/기대결과를 구체적으로 쓴다.\n" +
+                "5. 자료에 없는 정책/값을 임의로 확정하지 않는다.\n" +
+                "6. 필요하면 5~30개의 TC를 작성한다. 복잡한 기획서는 더 많이 작성해도 된다.\n\n" +
+                "다음 JSON 배열 형식만 반환:\n" +
                 "[{\"id\":\"TC-001\",\"title\":\"...\",\"preconditions\":\"...\",\"steps\":\"1. ...\\n2. ...\",\"expectedResult\":\"...\",\"priority\":\"P1\",\"type\":\"Positive\"}]";
+
+            string[] images = documents
+                .SelectMany(d => d.Images ?? Array.Empty<LocalDocumentImage>())
+                .Where(x => x.Bytes is { Length: > 0 } && x.Bytes.Length <= MaxSingleVisionImageBytes)
+                .Take(MaxVisionImages)
+                .Select(x => Convert.ToBase64String(x.Bytes))
+                .ToArray();
+
+            object userMessage = images.Length > 0
+                ? new { role = "user", content = user, images }
+                : new { role = "user", content = user };
 
             var payload = new
             {
                 model = model.Trim(),
                 stream = false,
                 format = "json",
+                think = false,
                 messages = new object[]
                 {
                     new { role = "system", content = system },
-                    new { role = "user", content = user }
+                    userMessage
                 },
-                options = new { temperature = 0.2 }
+                options = new
+                {
+                    temperature = 0.15,
+                    num_ctx = 32768
+                }
             };
 
             string json = JsonSerializer.Serialize(payload);
@@ -268,24 +330,92 @@ namespace AppiumBuilder.Core
                 .GetProperty("content")
                 .GetString() ?? string.Empty;
 
-            LocalLlmCaseDto[]? items = JsonSerializer.Deserialize<LocalLlmCaseDto[]>(modelText,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            LocalLlmCaseDto[]? items = DeserializeCases(modelText);
             if (items == null || items.Length == 0)
                 throw new InvalidDataException("로컬 모델이 TC JSON을 반환하지 않았습니다.");
 
-            return items.Take(12).Select((item, index) => new LocalTestCase
+            return items.Take(40).Select((item, index) => new LocalTestCase
             {
                 Id = string.IsNullOrWhiteSpace(item.Id) ? $"TC-{index + 1:000}" : item.Id.Trim(),
                 Title = item.Title?.Trim() ?? string.Empty,
                 Preconditions = item.Preconditions?.Trim() ?? string.Empty,
-                Steps = item.Steps?.Trim() ?? string.Empty,
+                Steps = NormalizeMultiline(item.Steps),
                 ExpectedResult = item.ExpectedResult?.Trim() ?? string.Empty,
                 Priority = string.IsNullOrWhiteSpace(item.Priority) ? "P2" : item.Priority.Trim(),
                 Type = string.IsNullOrWhiteSpace(item.Type) ? "Positive" : item.Type.Trim()
-            }).Where(x => !string.IsNullOrWhiteSpace(x.Title)).ToArray();
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Title))
+            .GroupBy(x => NormalizeCaseKey(x.Title), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToArray();
         }
 
         public void Dispose() => _client.Dispose();
+
+        private static string BuildDocumentPrompt(IReadOnlyList<LocalPlanningDocument> documents)
+        {
+            if (documents == null || documents.Count == 0)
+                return "(첨부 기획서 없음)";
+
+            var sb = new StringBuilder();
+            foreach (LocalPlanningDocument document in documents)
+            {
+                if (sb.Length >= MaxCombinedDocumentTextChars) break;
+                sb.AppendLine($"\n--- {document.FileName} / {document.Kind} / 단위 {document.UnitCount} / 이미지 {document.Images.Count}개 ---");
+                if (!string.IsNullOrWhiteSpace(document.Warning))
+                    sb.AppendLine("[추출 참고] " + document.Warning);
+                if (string.IsNullOrWhiteSpace(document.ExtractedText))
+                    sb.AppendLine("(텍스트 없음 - 첨부 이미지가 있으면 Vision 입력으로 분석)");
+                else
+                    AppendLimited(sb, document.ExtractedText, MaxCombinedDocumentTextChars);
+            }
+            return sb.ToString().Trim();
+        }
+
+        private static void AppendLimited(StringBuilder builder, string value, int maxChars)
+        {
+            if (builder.Length >= maxChars || string.IsNullOrEmpty(value)) return;
+            int available = maxChars - builder.Length;
+            if (value.Length <= available) builder.AppendLine(value);
+            else builder.Append(value.AsSpan(0, available));
+        }
+
+        private static LocalLlmCaseDto[]? DeserializeCases(string modelText)
+        {
+            string text = (modelText ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(text)) return null;
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            try
+            {
+                return JsonSerializer.Deserialize<LocalLlmCaseDto[]>(text, options);
+            }
+            catch (JsonException)
+            {
+                // 일부 모델은 {"cases":[...]} 형태로 감싸기도 하므로 로컬에서 한 번 더 수용한다.
+                using JsonDocument wrapper = JsonDocument.Parse(text);
+                if (wrapper.RootElement.ValueKind == JsonValueKind.Object
+                    && wrapper.RootElement.TryGetProperty("cases", out JsonElement cases)
+                    && cases.ValueKind == JsonValueKind.Array)
+                {
+                    return JsonSerializer.Deserialize<LocalLlmCaseDto[]>(cases.GetRawText(), options);
+                }
+                throw;
+            }
+        }
+
+        private static string NormalizeMultiline(string? value)
+        {
+            return (value ?? string.Empty).Replace("\r\n", "\n").Replace("\n", "\r\n").Trim();
+        }
+
+        private static string NormalizeCaseKey(string value)
+        {
+            return new string((value ?? string.Empty)
+                .Where(ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch))
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+        }
 
         private static string TrimForMessage(string value)
         {
