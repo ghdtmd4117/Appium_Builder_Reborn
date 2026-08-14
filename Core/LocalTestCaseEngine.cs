@@ -206,7 +206,7 @@ namespace AppiumBuilder.Core
         {
             return Uri.TryCreate(endpoint, UriKind.Absolute, out Uri? uri)
                 && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-                && Uri.IsLoopback(uri);
+                && uri.IsLoopback;
         }
 
         public async Task<IReadOnlyList<LocalTestCase>> GenerateWithOllamaAsync(
@@ -225,7 +225,7 @@ namespace AppiumBuilder.Core
 
             var baseUri = new Uri(endpoint.EndsWith('/') ? endpoint : endpoint + "/", UriKind.Absolute);
             var requestUri = new Uri(baseUri, "api/chat");
-            if (!Uri.IsLoopback(requestUri))
+            if (!requestUri.IsLoopback)
                 throw new InvalidOperationException("로컬 전용 보안 검증에 실패했습니다.");
 
             string system =
