@@ -80,7 +80,7 @@ namespace AppiumBuilder
 
         private sealed class AiUiContext
         {
-            public string CompactText { get; init; } = string.Empty;
+            public string CompactText { get; set; } = string.Empty;
             public HashSet<string> ResourceIds { get; } = new(StringComparer.Ordinal);
             public HashSet<string> AccessibilityLabels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> VisibleTexts { get; } = new(StringComparer.OrdinalIgnoreCase);
