@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="AppiumBuilder.csproj" />
-  <Project Path="Tests/AppiumBuilder.Tests.csproj" />
-</Solution>
