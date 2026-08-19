@@ -1,0 +1,30 @@
+name: Package UTF-8 log fix handoff
+
+on:
+  push:
+    branches:
+      - handoff/utf8-log-fix
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Create source ZIP
+        shell: bash
+        run: |
+          zip -r AppiumBuilder_Reborn_UTF8LogFix.zip . \
+            -x '.git/*' \
+               '.github/workflows/handoff-utf8-log-fix.yml' \
+               '*/bin/*' \
+               '*/obj/*' \
+               '.vs/*'
+      - name: Upload handoff ZIP
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: AppiumBuilder_Reborn_UTF8LogFix
+          path: AppiumBuilder_Reborn_UTF8LogFix.zip
+          if-no-files-found: error
