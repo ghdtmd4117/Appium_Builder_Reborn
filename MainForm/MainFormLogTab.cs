@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Windows.Forms;
 using AppiumBuilder.Core;
 using AppiumBuilder.UI;
@@ -296,6 +297,8 @@ namespace AppiumBuilder
                             UseShellExecute = false,
                             RedirectStandardOutput = true,
                             RedirectStandardError = true,
+                            StandardOutputEncoding = new UTF8Encoding(false, true),
+                            StandardErrorEncoding = new UTF8Encoding(false, true),
                             CreateNoWindow = true
                         },
                         EnableRaisingEvents = true
@@ -529,7 +532,7 @@ namespace AppiumBuilder
                     string fileName = $"Log_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
                     string path = Path.Combine(Globals.LogFolder, fileName);
                     string allLogText = string.Join(Environment.NewLine, logArchive.ToArray());
-                    File.WriteAllText(path, allLogText);
+                    File.WriteAllText(path, allLogText, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
                     lblLogSavedFile.Text = fileName;
                     lblStatusMsg.Text = "상태: 로그 저장 완료";
                     MessageBox.Show("로그를 저장했습니다.\n" + path, "저장 완료");
