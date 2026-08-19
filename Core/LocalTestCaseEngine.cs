@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -8,180 +10,341 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 
 namespace AppiumBuilder.Core
 {
-    public sealed class LocalTestCase
+    public sealed class DynamicTestCase
     {
-        public string Id { get; set; } = string.Empty;
-        public string Title { get; set; } = string.Empty;
-        public string Preconditions { get; set; } = string.Empty;
-        public string Steps { get; set; } = string.Empty;
-        public string ExpectedResult { get; set; } = string.Empty;
-        public string Priority { get; set; } = "P1";
-        public string Type { get; set; } = "Positive";
+        public Dictionary<string, string> Fields { get; set; } = new(StringComparer.CurrentCultureIgnoreCase);
+
+        public string GetValue(string column)
+        {
+            if (Fields.TryGetValue(column, out string? value)) return value ?? string.Empty;
+            KeyValuePair<string, string> match = Fields.FirstOrDefault(x =>
+                x.Key.Equals(column, StringComparison.CurrentCultureIgnoreCase));
+            return match.Key == null ? string.Empty : match.Value ?? string.Empty;
+        }
     }
 
-    public sealed class LocalTestCaseTemplate
+    public sealed class TcExampleSet
     {
-        public string Name { get; init; } = "기본 TC 양식";
-        public IReadOnlyList<string> Columns { get; init; } = DefaultColumns;
+        public string SourcePath { get; init; } = string.Empty;
+        public string FileName { get; init; } = string.Empty;
+        public IReadOnlyList<string> Columns { get; init; } = Array.Empty<string>();
+        public IReadOnlyList<Dictionary<string, string>> Rows { get; init; } = Array.Empty<Dictionary<string, string>>();
+        public int TotalRowCount { get; init; }
 
-        public static IReadOnlyList<string> DefaultColumns { get; } = new[]
-        {
-            "TC ID", "제목", "사전조건", "테스트 절차", "기대결과", "우선순위", "유형"
-        };
+        public string DisplaySummary => $"{FileName} · 컬럼 {Columns.Count}개 · 예시 {Rows.Count}행 / 전체 {TotalRowCount}행";
+    }
 
-        public static LocalTestCaseTemplate FromCsvHeader(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("양식 경로가 비어 있습니다.", nameof(path));
-            if (!File.Exists(path)) throw new FileNotFoundException("CSV 양식을 찾을 수 없습니다.", path);
+    public sealed class TcLearningDigest
+    {
+        public List<string> Columns { get; set; } = new();
+        public string RuleSummary { get; set; } = string.Empty;
+        public string StyleGuide { get; set; } = string.Empty;
+        public string CoverageGuide { get; set; } = string.Empty;
+        public List<string> Warnings { get; set; } = new();
+    }
 
-            string? firstLine = File.ReadLines(path, Encoding.UTF8).FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(firstLine)) throw new InvalidDataException("CSV 첫 행에 컬럼명이 없습니다.");
-
-            string[] columns = ParseCsvLine(firstLine).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
-            if (columns.Length == 0) throw new InvalidDataException("CSV 컬럼을 해석하지 못했습니다.");
-
-            return new LocalTestCaseTemplate
-            {
-                Name = Path.GetFileName(path),
-                Columns = columns
-            };
-        }
-
-        internal static string[] ParseCsvLine(string line)
-        {
-            var values = new List<string>();
-            var current = new StringBuilder();
-            bool quoted = false;
-
-            for (int i = 0; i < line.Length; i++)
-            {
-                char ch = line[i];
-                if (ch == '"')
-                {
-                    if (quoted && i + 1 < line.Length && line[i + 1] == '"')
-                    {
-                        current.Append('"');
-                        i++;
-                    }
-                    else
-                    {
-                        quoted = !quoted;
-                    }
-                }
-                else if (ch == ',' && !quoted)
-                {
-                    values.Add(current.ToString().Trim());
-                    current.Clear();
-                }
-                else
-                {
-                    current.Append(ch);
-                }
-            }
-
-            values.Add(current.ToString().Trim());
-            return values.ToArray();
-        }
+    public sealed class GeneratedTcBatch
+    {
+        public IReadOnlyList<string> Columns { get; init; } = Array.Empty<string>();
+        public IReadOnlyList<DynamicTestCase> Cases { get; init; } = Array.Empty<DynamicTestCase>();
     }
 
     public static class LocalTestCaseEngine
     {
-        public static IReadOnlyList<LocalTestCase> BuildRuleBasedDraft(string requirement)
-        {
-            string subject = NormalizeRequirement(requirement);
-            if (string.IsNullOrWhiteSpace(subject)) return Array.Empty<LocalTestCase>();
+        private const int MaxExampleRows = 24;
+        private const int MaxExampleCellChars = 4000;
 
-            return new[]
+        public static TcExampleSet ReadExampleSet(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("TC 예시 파일 경로가 비어 있습니다.", nameof(path));
+            if (!File.Exists(path)) throw new FileNotFoundException("TC 예시 파일을 찾을 수 없습니다.", path);
+
+            string ext = Path.GetExtension(path).ToLowerInvariant();
+            return ext switch
             {
-                new LocalTestCase
-                {
-                    Id = "TC-001",
-                    Title = $"{subject} - 정상 흐름",
-                    Preconditions = "테스트 대상 기능에 접근 가능한 상태이며 기본 테스트 데이터가 준비되어 있다.",
-                    Steps = $"1. {subject} 기능에 진입한다.\r\n2. 유효한 조건과 값을 입력한다.\r\n3. 실행/확인 동작을 수행한다.",
-                    ExpectedResult = "기능이 정상 처리되고 사용자가 기대한 완료 상태 또는 결과가 표시된다.",
-                    Priority = "P1",
-                    Type = "Positive"
-                },
-                new LocalTestCase
-                {
-                    Id = "TC-002",
-                    Title = $"{subject} - 필수값/오류 처리",
-                    Preconditions = "테스트 대상 기능에 접근 가능한 상태이다.",
-                    Steps = $"1. {subject} 기능에 진입한다.\r\n2. 필수값을 비우거나 유효하지 않은 값을 입력한다.\r\n3. 실행/확인 동작을 수행한다.",
-                    ExpectedResult = "잘못된 요청이 처리되지 않고 사용자가 이해할 수 있는 오류 또는 검증 메시지가 표시된다.",
-                    Priority = "P1",
-                    Type = "Negative"
-                },
-                new LocalTestCase
-                {
-                    Id = "TC-003",
-                    Title = $"{subject} - 경계값/반복 동작",
-                    Preconditions = "테스트 대상 기능에 접근 가능한 상태이며 경계값 테스트가 가능한 데이터가 준비되어 있다.",
-                    Steps = $"1. {subject} 기능에 진입한다.\r\n2. 최소/최대/빈 값 등 경계 조건을 적용한다.\r\n3. 같은 동작을 반복 수행하고 상태 변화를 확인한다.",
-                    ExpectedResult = "경계 조건에서도 비정상 종료나 데이터 훼손 없이 정의된 정책대로 처리된다.",
-                    Priority = "P2",
-                    Type = "Boundary"
-                }
+                ".csv" => ReadCsvExample(path),
+                ".xlsx" => ReadXlsxExample(path),
+                _ => throw new NotSupportedException("기존 TC 학습 파일은 CSV 또는 XLSX 형식을 지원합니다.")
             };
         }
 
-        public static void ExportCsv(string path, LocalTestCaseTemplate template, IEnumerable<LocalTestCase> cases)
+        public static void ExportCsv(string path, IReadOnlyList<string> columns, IEnumerable<DynamicTestCase> cases)
         {
-            ArgumentNullException.ThrowIfNull(template);
+            ArgumentNullException.ThrowIfNull(columns);
             ArgumentNullException.ThrowIfNull(cases);
+            if (columns.Count == 0) throw new InvalidOperationException("내보낼 TC 컬럼이 없습니다.");
 
             string? directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
 
             var sb = new StringBuilder();
-            sb.AppendLine(string.Join(",", template.Columns.Select(EscapeCsv)));
-
-            foreach (LocalTestCase testCase in cases)
+            sb.AppendLine(string.Join(",", columns.Select(EscapeCsv)));
+            foreach (DynamicTestCase testCase in cases)
             {
-                IEnumerable<string> row = template.Columns.Select(column => ResolveColumnValue(testCase, column));
+                IEnumerable<string> row = columns.Select(testCase.GetValue);
                 sb.AppendLine(string.Join(",", row.Select(EscapeCsv)));
             }
-
             File.WriteAllText(path, sb.ToString(), new UTF8Encoding(true));
         }
 
-        internal static string ResolveColumnValue(LocalTestCase testCase, string column)
+        public static IReadOnlyList<string> ChooseCanonicalColumns(IEnumerable<TcExampleSet> examples)
         {
-            string key = NormalizeColumn(column);
-            if (key is "id" or "tcid" or "testcaseid" or "테스트케이스id" or "테스트id") return testCase.Id;
-            if (key.Contains("title") || key.Contains("제목") || key is "testcase" or "테스트케이스" or "테스트항목") return testCase.Title;
-            if (key.Contains("precondition") || key.Contains("사전조건") || key.Contains("선행조건")) return testCase.Preconditions;
-            if (key.Contains("step") || key.Contains("procedure") || key.Contains("테스트절차") || key.Contains("수행절차") || key.Contains("절차")) return testCase.Steps;
-            if (key.Contains("expected") || key.Contains("expect") || key.Contains("기대결과") || key.Contains("예상결과")) return testCase.ExpectedResult;
-            if (key.Contains("priority") || key.Contains("우선순위") || key.Contains("중요도")) return testCase.Priority;
-            if (key.Contains("type") || key.Contains("유형") || key.Contains("구분")) return testCase.Type;
-            return string.Empty;
+            List<TcExampleSet> sets = (examples ?? Array.Empty<TcExampleSet>())
+                .Where(x => x.Columns.Count > 0)
+                .ToList();
+            if (sets.Count == 0) return Array.Empty<string>();
+
+            return sets
+                .GroupBy(x => string.Join("\u001F", x.Columns.Select(c => c.Trim())), StringComparer.CurrentCultureIgnoreCase)
+                .OrderByDescending(g => g.Count())
+                .ThenByDescending(g => g.Sum(x => x.TotalRowCount))
+                .First()
+                .First()
+                .Columns
+                .ToArray();
         }
 
-        private static string NormalizeRequirement(string requirement)
+        public static List<Dictionary<string, string>> BuildRepresentativeExamples(
+            IEnumerable<TcExampleSet> exampleSets,
+            IReadOnlyList<string> canonicalColumns,
+            int maxRows = 8)
         {
-            string value = (requirement ?? string.Empty).Replace("\r", " ").Replace("\n", " ").Trim();
-            while (value.Contains("  ", StringComparison.Ordinal)) value = value.Replace("  ", " ", StringComparison.Ordinal);
-            return value.Length > 80 ? value[..80] + "…" : value;
+            var result = new List<Dictionary<string, string>>();
+            foreach (TcExampleSet set in exampleSets ?? Array.Empty<TcExampleSet>())
+            {
+                foreach (Dictionary<string, string> source in set.Rows)
+                {
+                    var row = new Dictionary<string, string>(StringComparer.CurrentCultureIgnoreCase);
+                    IEnumerable<string> columns = canonicalColumns.Count > 0 ? canonicalColumns : set.Columns;
+                    foreach (string column in columns)
+                    {
+                        if (TryGetCaseInsensitive(source, column, out string value))
+                            row[column] = Limit(value, 1800);
+                    }
+                    if (row.Count > 0) result.Add(row);
+                    if (result.Count >= maxRows) return result;
+                }
+            }
+            return result;
         }
 
-        private static string NormalizeColumn(string value)
-        {
-            return new string((value ?? string.Empty)
-                .Where(ch => !char.IsWhiteSpace(ch) && ch is not '_' and not '-' and not '(' and not ')' and not '[' and not ']')
-                .Select(char.ToLowerInvariant)
-                .ToArray());
-        }
-
-        private static string EscapeCsv(string value)
+        internal static string EscapeCsv(string? value)
         {
             string safe = value ?? string.Empty;
             if (!safe.Contains(',') && !safe.Contains('"') && !safe.Contains('\r') && !safe.Contains('\n')) return safe;
             return '"' + safe.Replace("\"", "\"\"") + '"';
+        }
+
+        private static TcExampleSet ReadCsvExample(string path)
+        {
+            string content = File.ReadAllText(path, Encoding.UTF8);
+            List<List<string>> table = ParseCsvDocument(content);
+            if (table.Count == 0) throw new InvalidDataException("CSV에서 TC 데이터를 찾지 못했습니다.");
+
+            List<string> columns = NormalizeColumns(table[0]);
+            if (columns.Count == 0) throw new InvalidDataException("CSV 첫 행에서 컬럼명을 찾지 못했습니다.");
+
+            List<Dictionary<string, string>> rows = BuildRows(columns, table.Skip(1));
+            return new TcExampleSet
+            {
+                SourcePath = path,
+                FileName = Path.GetFileName(path),
+                Columns = columns,
+                Rows = rows.Take(MaxExampleRows).ToArray(),
+                TotalRowCount = rows.Count
+            };
+        }
+
+        private static TcExampleSet ReadXlsxExample(string path)
+        {
+            using ZipArchive archive = ZipFile.OpenRead(path);
+            List<string> sharedStrings = ReadSharedStrings(archive);
+            ZipArchiveEntry? sheet = archive.GetEntry("xl/worksheets/sheet1.xml")
+                ?? archive.Entries.FirstOrDefault(x => x.FullName.StartsWith("xl/worksheets/sheet", StringComparison.OrdinalIgnoreCase)
+                    && x.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase));
+            if (sheet == null) throw new InvalidDataException("XLSX에서 첫 Worksheet를 찾지 못했습니다.");
+
+            using Stream stream = sheet.Open();
+            XDocument doc = XDocument.Load(stream);
+            XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            List<List<string>> table = new();
+
+            foreach (XElement rowElement in doc.Descendants(ns + "row"))
+            {
+                var cells = new SortedDictionary<int, string>();
+                foreach (XElement cell in rowElement.Elements(ns + "c"))
+                {
+                    string reference = (string?)cell.Attribute("r") ?? string.Empty;
+                    int index = ColumnIndexFromReference(reference);
+                    if (index < 0) continue;
+                    cells[index] = ReadXlsxCell(cell, ns, sharedStrings);
+                }
+                if (cells.Count == 0) continue;
+                int max = cells.Keys.Max();
+                var row = new List<string>(Enumerable.Repeat(string.Empty, max + 1));
+                foreach (KeyValuePair<int, string> cell in cells) row[cell.Key] = cell.Value;
+                table.Add(row);
+            }
+
+            if (table.Count == 0) throw new InvalidDataException("XLSX 첫 Worksheet에서 TC 데이터를 찾지 못했습니다.");
+            List<string> columns = NormalizeColumns(table[0]);
+            if (columns.Count == 0) throw new InvalidDataException("XLSX 첫 행에서 컬럼명을 찾지 못했습니다.");
+
+            List<Dictionary<string, string>> rows = BuildRows(columns, table.Skip(1));
+            return new TcExampleSet
+            {
+                SourcePath = path,
+                FileName = Path.GetFileName(path),
+                Columns = columns,
+                Rows = rows.Take(MaxExampleRows).ToArray(),
+                TotalRowCount = rows.Count
+            };
+        }
+
+        private static List<Dictionary<string, string>> BuildRows(List<string> columns, IEnumerable<List<string>> sourceRows)
+        {
+            var rows = new List<Dictionary<string, string>>();
+            foreach (List<string> source in sourceRows)
+            {
+                if (source.All(string.IsNullOrWhiteSpace)) continue;
+                var row = new Dictionary<string, string>(StringComparer.CurrentCultureIgnoreCase);
+                for (int i = 0; i < columns.Count; i++)
+                {
+                    string value = i < source.Count ? Limit(source[i], MaxExampleCellChars) : string.Empty;
+                    row[columns[i]] = value;
+                }
+                rows.Add(row);
+            }
+            return rows;
+        }
+
+        private static List<string> NormalizeColumns(IReadOnlyList<string> raw)
+        {
+            var columns = new List<string>();
+            for (int i = 0; i < raw.Count; i++)
+            {
+                string value = (raw[i] ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(value)) value = $"Column_{i + 1}";
+                string unique = value;
+                int suffix = 2;
+                while (columns.Any(x => x.Equals(unique, StringComparison.CurrentCultureIgnoreCase)))
+                    unique = value + "_" + suffix++;
+                columns.Add(unique);
+                if (columns.Count >= 40) break;
+            }
+            while (columns.Count > 0 && columns[^1].StartsWith("Column_", StringComparison.Ordinal) && raw.Count > columns.Count - 1 && string.IsNullOrWhiteSpace(raw[columns.Count - 1]))
+                columns.RemoveAt(columns.Count - 1);
+            return columns;
+        }
+
+        private static List<List<string>> ParseCsvDocument(string content)
+        {
+            var rows = new List<List<string>>();
+            var row = new List<string>();
+            var cell = new StringBuilder();
+            bool quoted = false;
+            string text = content ?? string.Empty;
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                char ch = text[i];
+                if (ch == '"')
+                {
+                    if (quoted && i + 1 < text.Length && text[i + 1] == '"')
+                    {
+                        cell.Append('"');
+                        i++;
+                    }
+                    else quoted = !quoted;
+                    continue;
+                }
+                if (ch == ',' && !quoted)
+                {
+                    row.Add(cell.ToString());
+                    cell.Clear();
+                    continue;
+                }
+                if ((ch == '\r' || ch == '\n') && !quoted)
+                {
+                    if (ch == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                    row.Add(cell.ToString());
+                    cell.Clear();
+                    if (row.Any(x => !string.IsNullOrWhiteSpace(x))) rows.Add(row);
+                    row = new List<string>();
+                    continue;
+                }
+                cell.Append(ch);
+            }
+
+            if (cell.Length > 0 || row.Count > 0)
+            {
+                row.Add(cell.ToString());
+                if (row.Any(x => !string.IsNullOrWhiteSpace(x))) rows.Add(row);
+            }
+            return rows;
+        }
+
+        private static List<string> ReadSharedStrings(ZipArchive archive)
+        {
+            ZipArchiveEntry? entry = archive.GetEntry("xl/sharedStrings.xml");
+            if (entry == null) return new List<string>();
+            using Stream stream = entry.Open();
+            XDocument doc = XDocument.Load(stream);
+            XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            return doc.Descendants(ns + "si")
+                .Select(si => string.Concat(si.Descendants(ns + "t").Select(t => t.Value)))
+                .ToList();
+        }
+
+        private static string ReadXlsxCell(XElement cell, XNamespace ns, IReadOnlyList<string> sharedStrings)
+        {
+            string type = (string?)cell.Attribute("t") ?? string.Empty;
+            if (type == "inlineStr") return string.Concat(cell.Descendants(ns + "t").Select(x => x.Value));
+            string raw = cell.Element(ns + "v")?.Value ?? string.Empty;
+            if (type == "s" && int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index)
+                && index >= 0 && index < sharedStrings.Count)
+                return sharedStrings[index];
+            return raw;
+        }
+
+        private static int ColumnIndexFromReference(string reference)
+        {
+            int value = 0;
+            bool found = false;
+            foreach (char ch in reference)
+            {
+                if (!char.IsLetter(ch)) break;
+                found = true;
+                value = value * 26 + (char.ToUpperInvariant(ch) - 'A' + 1);
+            }
+            return found ? value - 1 : -1;
+        }
+
+        private static bool TryGetCaseInsensitive(Dictionary<string, string> source, string key, out string value)
+        {
+            if (source.TryGetValue(key, out string? exact))
+            {
+                value = exact ?? string.Empty;
+                return true;
+            }
+            KeyValuePair<string, string> match = source.FirstOrDefault(x => x.Key.Equals(key, StringComparison.CurrentCultureIgnoreCase));
+            if (match.Key != null)
+            {
+                value = match.Value ?? string.Empty;
+                return true;
+            }
+            value = string.Empty;
+            return false;
+        }
+
+        private static string Limit(string? value, int max)
+        {
+            string text = value ?? string.Empty;
+            return text.Length <= max ? text : text[..max];
         }
     }
 
@@ -190,7 +353,6 @@ namespace AppiumBuilder.Core
         private const int MaxCombinedDocumentTextChars = 120_000;
         private const int MaxVisionImages = 10;
         private const int MaxSingleVisionImageBytes = 12 * 1024 * 1024;
-
         private readonly HttpClient _client;
 
         public LocalOnlyLlmClient()
@@ -200,10 +362,7 @@ namespace AppiumBuilder.Core
                 AllowAutoRedirect = false,
                 UseProxy = false
             };
-            _client = new HttpClient(handler)
-            {
-                Timeout = TimeSpan.FromMinutes(8)
-            };
+            _client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(8) };
         }
 
         public static bool IsLoopbackEndpoint(string endpoint)
@@ -213,84 +372,124 @@ namespace AppiumBuilder.Core
                 && uri.IsLoopback;
         }
 
-        public Task<IReadOnlyList<LocalTestCase>> GenerateWithOllamaAsync(
+        public async Task<TcLearningDigest> LearnProfileAsync(
             string endpoint,
             string model,
-            string requirement,
-            IReadOnlyList<string> templateColumns,
+            string manualRules,
+            IReadOnlyList<TcExampleSet> exampleSets,
+            IReadOnlyList<LocalPlanningDocument> learningDocuments,
             CancellationToken cancellationToken = default)
         {
-            return GenerateWithOllamaAsync(
-                endpoint,
-                model,
-                requirement,
-                string.Empty,
-                templateColumns,
-                Array.Empty<LocalPlanningDocument>(),
-                cancellationToken);
+            ValidateEndpointAndModel(endpoint, model);
+            exampleSets ??= Array.Empty<TcExampleSet>();
+            learningDocuments ??= Array.Empty<LocalPlanningDocument>();
+            if (string.IsNullOrWhiteSpace(manualRules) && exampleSets.Count == 0 && learningDocuments.Count == 0)
+                throw new InvalidOperationException("직접 작성 규칙 또는 학습 자료를 한 개 이상 추가해주세요.");
+
+            IReadOnlyList<string> canonicalColumns = LocalTestCaseEngine.ChooseCanonicalColumns(exampleSets);
+            string examplesText = BuildExamplePrompt(exampleSets);
+            string documentText = BuildDocumentPrompt(learningDocuments);
+            string columnInstruction = canonicalColumns.Count > 0
+                ? "기존 TC에서 관찰된 컬럼은 다음과 같다. 컬럼명과 순서를 그대로 유지해야 한다: " + string.Join(" | ", canonicalColumns)
+                : "고정 컬럼을 가정하지 말고, 학습 자료에서 실제 출력 구조를 추론하라.";
+
+            string system =
+                "You are a senior QA methodology analyst running in a strictly local-only desktop application. " +
+                "Your job is to learn a project's test-case writing conventions from user-provided local examples, guides, planning documents and images. " +
+                "Do not invent company rules. Do not assume any universal TC schema. Return JSON only.";
+
+            string user =
+                "[사용자가 직접 설명한 작성 규칙]\n" + Empty(manualRules, "(없음)") + "\n\n" +
+                "[기존 작성 TC 예시]\n" + examplesText + "\n\n" +
+                "[TC 작성 가이드/관련 기획서/이미지에서 로컬 추출한 내용]\n" + documentText + "\n\n" +
+                "[스키마 규칙]\n" + columnInstruction + "\n\n" +
+                "분석할 항목:\n" +
+                "1. 실제 컬럼명과 컬럼 순서\n" +
+                "2. 문장 톤, 용어, 번호/기호/개행 방식, 상세 수준\n" +
+                "3. TC 분리 기준, 정상/예외/경계/상태/권한 등의 커버리지 습관\n" +
+                "4. 반드시 지켜야 할 규칙과 하지 말아야 할 표현\n" +
+                "5. 서로 충돌하거나 확실하지 않은 규칙은 warnings에 기록\n\n" +
+                "다음 JSON 객체만 반환:\n" +
+                "{\"columns\":[\"실제 컬럼명\"],\"ruleSummary\":\"...\",\"styleGuide\":\"...\",\"coverageGuide\":\"...\",\"warnings\":[\"...\"]}";
+
+            string modelText = await SendChatAsync(endpoint, model, system, user, CollectImages(learningDocuments), cancellationToken).ConfigureAwait(false);
+            TcLearningDigest digest = DeserializeLearningDigest(modelText);
+            if (canonicalColumns.Count > 0) digest.Columns = canonicalColumns.ToList();
+            digest.Columns = DistinctColumns(digest.Columns);
+            digest.Warnings ??= new List<string>();
+
+            if (exampleSets.Select(x => string.Join("\u001F", x.Columns)).Distinct(StringComparer.CurrentCultureIgnoreCase).Count() > 1)
+                digest.Warnings.Add("학습한 기존 TC 파일들의 컬럼 구조가 서로 달라 가장 많이 관찰된 구조를 대표 스키마로 사용합니다.");
+
+            return digest;
         }
 
-        public async Task<IReadOnlyList<LocalTestCase>> GenerateWithOllamaAsync(
+        public async Task<GeneratedTcBatch> GenerateWithOllamaAsync(
             string endpoint,
             string model,
             string requirement,
-            string generationGuide,
-            IReadOnlyList<string> templateColumns,
+            TcLearningProfile profile,
             IReadOnlyList<LocalPlanningDocument> documents,
             CancellationToken cancellationToken = default)
         {
-            if (!IsLoopbackEndpoint(endpoint))
-                throw new InvalidOperationException("보안 정책상 로컬 TC 생성기는 localhost/127.0.0.1/::1 주소에만 연결할 수 있습니다.");
-            if (string.IsNullOrWhiteSpace(model))
-                throw new InvalidOperationException("로컬 모델명이 설정되지 않았습니다.");
-            if (string.IsNullOrWhiteSpace(requirement) && (documents == null || documents.Count == 0))
-                throw new InvalidOperationException("요구사항을 입력하거나 기획서 파일을 추가해주세요.");
-
+            ValidateEndpointAndModel(endpoint, model);
+            ArgumentNullException.ThrowIfNull(profile);
             documents ??= Array.Empty<LocalPlanningDocument>();
-            templateColumns ??= LocalTestCaseTemplate.DefaultColumns;
+            if (string.IsNullOrWhiteSpace(requirement) && documents.Count == 0)
+                throw new InvalidOperationException("이번 TC 생성에 사용할 요구사항 또는 기획서/이미지를 추가해주세요.");
 
-            var baseUri = new Uri(endpoint.EndsWith('/') ? endpoint : endpoint + "/", UriKind.Absolute);
-            var requestUri = new Uri(baseUri, "api/chat");
-            if (!requestUri.IsLoopback)
-                throw new InvalidOperationException("로컬 전용 보안 검증에 실패했습니다.");
+            string columnsText = profile.LearnedColumns.Count > 0
+                ? string.Join(" | ", profile.LearnedColumns)
+                : "(고정 컬럼 없음 - 학습 프로필과 예시에서 적절한 컬럼을 결정)";
+            string examplesText = profile.RepresentativeExamples.Count == 0
+                ? "(저장된 대표 TC 예시 없음)"
+                : JsonSerializer.Serialize(profile.RepresentativeExamples);
 
             string system =
                 "You are a senior QA test-case designer running inside a strictly local-only Windows desktop application. " +
-                "Use only the supplied requirement, planning documents, images and TC generation guide. " +
-                "Never request external uploads, web searches, cloud APIs, or assumptions that are not grounded in the supplied material. " +
-                "If a policy is not specified, express it as a verification point instead of inventing a product rule. " +
-                "Return JSON only. Create practical, executable test cases with positive, negative, boundary, state, permission, error, and recovery coverage when relevant. " +
-                "Follow the user's TC generation guide over your default style.";
-
-            string documentText = BuildDocumentPrompt(documents);
-            string guideText = string.IsNullOrWhiteSpace(generationGuide)
-                ? "(별도 가이드 없음 - 기본 QA 작성 원칙 적용)"
-                : generationGuide.Trim();
-            string requirementText = string.IsNullOrWhiteSpace(requirement)
-                ? "(추가 요구사항 없음 - 첨부 기획서를 기준으로 작성)"
-                : requirement.Trim();
+                "The project's learned TC profile is authoritative. Never force a universal ID/title/precondition/steps/expected/priority/type schema. " +
+                "Match the learned columns, terminology, tone, detail and formatting. Use only the supplied local material. Return JSON only.";
 
             string user =
-                "[TC 생성 가이드 - 반드시 우선 적용]\n" + guideText + "\n\n" +
-                "[추가 요구사항 / 메모]\n" + requirementText + "\n\n" +
-                "[첨부 기획서에서 로컬 추출한 내용]\n" + documentText + "\n\n" +
-                "[업무 TC 양식 컬럼]\n" + string.Join(", ", templateColumns) + "\n\n" +
-                "작성 규칙:\n" +
-                "1. 기획서의 기능/화면/상태/조건/예외를 먼저 파악하고 테스트 포인트로 변환한다.\n" +
-                "2. 이미지가 첨부되었다면 화면의 버튼, 입력 영역, 문구, 팝업, 상태 변화 등 시각 정보도 근거로 사용한다.\n" +
-                "3. 중복 TC를 만들지 않는다.\n" +
-                "4. 각 TC는 혼자 실행 가능한 수준으로 사전조건/절차/기대결과를 구체적으로 쓴다.\n" +
-                "5. 자료에 없는 정책/값을 임의로 확정하지 않는다.\n" +
-                "6. 필요하면 5~30개의 TC를 작성한다. 복잡한 기획서는 더 많이 작성해도 된다.\n\n" +
-                "다음 JSON 배열 형식만 반환:\n" +
-                "[{\"id\":\"TC-001\",\"title\":\"...\",\"preconditions\":\"...\",\"steps\":\"1. ...\\n2. ...\",\"expectedResult\":\"...\",\"priority\":\"P1\",\"type\":\"Positive\"}]";
+                "[프로젝트 프로필]\n" + profile.Name + "\n\n" +
+                "[사용자 직접 규칙]\n" + Empty(profile.ManualRules, "(없음)") + "\n\n" +
+                "[학습된 필수 컬럼/순서]\n" + columnsText + "\n\n" +
+                "[학습된 규칙 요약]\n" + Empty(profile.LearnedRuleSummary, "(없음)") + "\n\n" +
+                "[학습된 문장/표현 스타일]\n" + Empty(profile.LearnedStyleGuide, "(없음)") + "\n\n" +
+                "[학습된 커버리지 기준]\n" + Empty(profile.LearnedCoverageGuide, "(없음)") + "\n\n" +
+                "[대표 기존 TC 예시 - 형식과 표현을 모방]\n" + examplesText + "\n\n" +
+                "[이번 추가 요구사항/메모]\n" + Empty(requirement, "(없음 - 기획서를 기준으로 생성)") + "\n\n" +
+                "[이번 기획서/이미지에서 로컬 추출한 내용]\n" + BuildDocumentPrompt(documents) + "\n\n" +
+                "생성 원칙:\n" +
+                "1. 기존 프로필의 컬럼이 있으면 이름과 순서를 정확히 유지한다. 새 고정 컬럼을 임의로 추가하지 않는다.\n" +
+                "2. 기존 TC 예시의 말투, 용어, 상세 수준, 줄바꿈/번호 표현을 최대한 동일하게 맞춘다.\n" +
+                "3. 이번 기획서의 기능/조건/상태/예외/화면 정보를 근거로 TC를 만든다.\n" +
+                "4. 자료에 없는 정책은 사실처럼 만들지 않는다.\n" +
+                "5. 중복 TC를 만들지 않는다.\n" +
+                "6. 컬럼이 학습되지 않았다면 이번 프로필/자료에 맞는 구조를 스스로 제안하되 특정 표준 7컬럼을 기본값으로 사용하지 않는다.\n\n" +
+                "다음 JSON 객체만 반환:\n" +
+                "{\"columns\":[\"컬럼1\",\"컬럼2\"],\"cases\":[{\"fields\":{\"컬럼1\":\"값\",\"컬럼2\":\"값\"}}]}";
 
-            string[] images = documents
-                .SelectMany(d => d.Images ?? Array.Empty<LocalDocumentImage>())
-                .Where(x => x.Bytes is { Length: > 0 } && x.Bytes.Length <= MaxSingleVisionImageBytes)
-                .Take(MaxVisionImages)
-                .Select(x => Convert.ToBase64String(x.Bytes))
-                .ToArray();
+            string modelText = await SendChatAsync(endpoint, model, system, user, CollectImages(documents), cancellationToken).ConfigureAwait(false);
+            GeneratedTcBatch batch = DeserializeGeneratedBatch(modelText, profile.LearnedColumns);
+            if (batch.Columns.Count == 0 || batch.Cases.Count == 0)
+                throw new InvalidDataException("로컬 모델이 동적 TC 구조를 반환하지 않았습니다.");
+            return batch;
+        }
+
+        public void Dispose() => _client.Dispose();
+
+        private async Task<string> SendChatAsync(
+            string endpoint,
+            string model,
+            string system,
+            string user,
+            string[] images,
+            CancellationToken cancellationToken)
+        {
+            var baseUri = new Uri(endpoint.EndsWith('/') ? endpoint : endpoint + "/", UriKind.Absolute);
+            var requestUri = new Uri(baseUri, "api/chat");
+            if (!requestUri.IsLoopback) throw new InvalidOperationException("로컬 전용 보안 검증에 실패했습니다.");
 
             object userMessage = images.Length > 0
                 ? new { role = "user", content = user, images }
@@ -307,11 +506,7 @@ namespace AppiumBuilder.Core
                     new { role = "system", content = system },
                     userMessage
                 },
-                options = new
-                {
-                    temperature = 0.15,
-                    num_ctx = 32768
-                }
+                options = new { temperature = 0.12, num_ctx = 32768 }
             };
 
             string json = JsonSerializer.Serialize(payload);
@@ -325,52 +520,156 @@ namespace AppiumBuilder.Core
                 throw new InvalidOperationException($"로컬 모델 호출 실패 ({(int)response.StatusCode}): {TrimForMessage(body)}");
 
             using JsonDocument doc = JsonDocument.Parse(body);
-            string modelText = doc.RootElement
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString() ?? string.Empty;
-
-            LocalLlmCaseDto[]? items = DeserializeCases(modelText);
-            if (items == null || items.Length == 0)
-                throw new InvalidDataException("로컬 모델이 TC JSON을 반환하지 않았습니다.");
-
-            return items.Take(40).Select((item, index) => new LocalTestCase
-            {
-                Id = string.IsNullOrWhiteSpace(item.Id) ? $"TC-{index + 1:000}" : item.Id.Trim(),
-                Title = item.Title?.Trim() ?? string.Empty,
-                Preconditions = item.Preconditions?.Trim() ?? string.Empty,
-                Steps = NormalizeMultiline(item.Steps),
-                ExpectedResult = item.ExpectedResult?.Trim() ?? string.Empty,
-                Priority = string.IsNullOrWhiteSpace(item.Priority) ? "P2" : item.Priority.Trim(),
-                Type = string.IsNullOrWhiteSpace(item.Type) ? "Positive" : item.Type.Trim()
-            })
-            .Where(x => !string.IsNullOrWhiteSpace(x.Title))
-            .GroupBy(x => NormalizeCaseKey(x.Title), StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .ToArray();
+            return doc.RootElement.GetProperty("message").GetProperty("content").GetString() ?? string.Empty;
         }
 
-        public void Dispose() => _client.Dispose();
+        private static TcLearningDigest DeserializeLearningDigest(string modelText)
+        {
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            TcLearningDigest? digest = JsonSerializer.Deserialize<TcLearningDigest>(CleanJson(modelText), options);
+            return digest ?? throw new InvalidDataException("로컬 모델이 학습 프로필 JSON을 반환하지 않았습니다.");
+        }
+
+        private static GeneratedTcBatch DeserializeGeneratedBatch(string modelText, IReadOnlyList<string> learnedColumns)
+        {
+            string text = CleanJson(modelText);
+            using JsonDocument doc = JsonDocument.Parse(text);
+            JsonElement root = doc.RootElement;
+            JsonElement casesElement;
+            List<string> columns = new();
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("columns", out JsonElement cols) && cols.ValueKind == JsonValueKind.Array)
+                    columns.AddRange(cols.EnumerateArray().Select(x => x.GetString() ?? string.Empty));
+                if (!root.TryGetProperty("cases", out casesElement) || casesElement.ValueKind != JsonValueKind.Array)
+                    throw new InvalidDataException("로컬 모델 응답에 cases 배열이 없습니다.");
+            }
+            else if (root.ValueKind == JsonValueKind.Array)
+            {
+                casesElement = root;
+            }
+            else throw new InvalidDataException("로컬 모델의 TC JSON 형식을 해석하지 못했습니다.");
+
+            if (learnedColumns.Count > 0) columns = learnedColumns.ToList();
+            columns = DistinctColumns(columns);
+            bool inferColumnsFromRows = columns.Count == 0;
+            var rows = new List<DynamicTestCase>();
+
+            foreach (JsonElement item in casesElement.EnumerateArray().Take(80))
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                JsonElement fieldsElement = item;
+                if (item.TryGetProperty("fields", out JsonElement fields) && fields.ValueKind == JsonValueKind.Object)
+                    fieldsElement = fields;
+
+                var map = new Dictionary<string, string>(StringComparer.CurrentCultureIgnoreCase);
+                foreach (JsonProperty property in fieldsElement.EnumerateObject())
+                {
+                    if (property.NameEquals("fields")) continue;
+                    string value = JsonValueToText(property.Value);
+                    map[property.Name] = NormalizeMultiline(value);
+                    if (inferColumnsFromRows && !columns.Any(x => x.Equals(property.Name, StringComparison.CurrentCultureIgnoreCase)))
+                        columns.Add(property.Name);
+                }
+                if (map.Count > 0) rows.Add(new DynamicTestCase { Fields = map });
+            }
+
+            if (columns.Count == 0 && rows.Count > 0) columns = rows[0].Fields.Keys.ToList();
+            columns = DistinctColumns(columns);
+            return new GeneratedTcBatch { Columns = columns, Cases = rows };
+        }
+
+        private static string BuildExamplePrompt(IReadOnlyList<TcExampleSet> sets)
+        {
+            if (sets == null || sets.Count == 0) return "(기존 TC 예시 없음)";
+            var sb = new StringBuilder();
+            foreach (TcExampleSet set in sets.Take(6))
+            {
+                sb.AppendLine($"--- {set.FileName} / columns: {string.Join(" | ", set.Columns)} / total rows: {set.TotalRowCount} ---");
+                foreach (Dictionary<string, string> row in set.Rows.Take(8))
+                    sb.AppendLine(JsonSerializer.Serialize(row));
+            }
+            return sb.ToString().Trim();
+        }
 
         private static string BuildDocumentPrompt(IReadOnlyList<LocalPlanningDocument> documents)
         {
-            if (documents == null || documents.Count == 0)
-                return "(첨부 기획서 없음)";
-
+            if (documents == null || documents.Count == 0) return "(첨부 문서 없음)";
             var sb = new StringBuilder();
             foreach (LocalPlanningDocument document in documents)
             {
                 if (sb.Length >= MaxCombinedDocumentTextChars) break;
                 sb.AppendLine($"\n--- {document.FileName} / {document.Kind} / 단위 {document.UnitCount} / 이미지 {document.Images.Count}개 ---");
-                if (!string.IsNullOrWhiteSpace(document.Warning))
-                    sb.AppendLine("[추출 참고] " + document.Warning);
-                if (string.IsNullOrWhiteSpace(document.ExtractedText))
-                    sb.AppendLine("(텍스트 없음 - 첨부 이미지가 있으면 Vision 입력으로 분석)");
-                else
-                    AppendLimited(sb, document.ExtractedText, MaxCombinedDocumentTextChars);
+                if (!string.IsNullOrWhiteSpace(document.Warning)) sb.AppendLine("[추출 참고] " + document.Warning);
+                if (string.IsNullOrWhiteSpace(document.ExtractedText)) sb.AppendLine("(텍스트 없음 - 첨부 이미지가 있으면 Vision 입력으로 분석)");
+                else AppendLimited(sb, document.ExtractedText, MaxCombinedDocumentTextChars);
             }
             return sb.ToString().Trim();
         }
+
+        private static string[] CollectImages(IReadOnlyList<LocalPlanningDocument> documents)
+        {
+            return (documents ?? Array.Empty<LocalPlanningDocument>())
+                .SelectMany(d => d.Images ?? Array.Empty<LocalDocumentImage>())
+                .Where(x => x.Bytes is { Length: > 0 } && x.Bytes.Length <= MaxSingleVisionImageBytes)
+                .Take(MaxVisionImages)
+                .Select(x => Convert.ToBase64String(x.Bytes))
+                .ToArray();
+        }
+
+        private static void ValidateEndpointAndModel(string endpoint, string model)
+        {
+            if (!IsLoopbackEndpoint(endpoint))
+                throw new InvalidOperationException("보안 정책상 로컬 TC 기능은 localhost/127.0.0.1/::1 주소에만 연결할 수 있습니다.");
+            if (string.IsNullOrWhiteSpace(model)) throw new InvalidOperationException("로컬 모델명이 설정되지 않았습니다.");
+        }
+
+        private static List<string> DistinctColumns(IEnumerable<string>? source)
+        {
+            var result = new List<string>();
+            foreach (string raw in source ?? Array.Empty<string>())
+            {
+                string value = (raw ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                if (result.Any(x => x.Equals(value, StringComparison.CurrentCultureIgnoreCase))) continue;
+                result.Add(value);
+                if (result.Count >= 40) break;
+            }
+            return result;
+        }
+
+        private static string JsonValueToText(JsonElement value)
+        {
+            return value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString() ?? string.Empty,
+                JsonValueKind.Null => string.Empty,
+                JsonValueKind.Array => string.Join("\n", value.EnumerateArray().Select(JsonValueToText)),
+                JsonValueKind.Object => value.GetRawText(),
+                _ => value.ToString()
+            };
+        }
+
+        private static string CleanJson(string value)
+        {
+            string text = (value ?? string.Empty).Trim();
+            if (text.StartsWith("```", StringComparison.Ordinal))
+            {
+                int firstNewline = text.IndexOf('\n');
+                if (firstNewline >= 0) text = text[(firstNewline + 1)..];
+                int lastFence = text.LastIndexOf("```", StringComparison.Ordinal);
+                if (lastFence >= 0) text = text[..lastFence];
+            }
+            return text.Trim();
+        }
+
+        private static string NormalizeMultiline(string? value)
+        {
+            return (value ?? string.Empty).Replace("\r\n", "\n").Replace("\n", "\r\n").Trim();
+        }
+
+        private static string Empty(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
         private static void AppendLimited(StringBuilder builder, string value, int maxChars)
         {
@@ -380,58 +679,10 @@ namespace AppiumBuilder.Core
             else builder.Append(value.AsSpan(0, available));
         }
 
-        private static LocalLlmCaseDto[]? DeserializeCases(string modelText)
-        {
-            string text = (modelText ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(text)) return null;
-
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            try
-            {
-                return JsonSerializer.Deserialize<LocalLlmCaseDto[]>(text, options);
-            }
-            catch (JsonException)
-            {
-                // 일부 모델은 {"cases":[...]} 형태로 감싸기도 하므로 로컬에서 한 번 더 수용한다.
-                using JsonDocument wrapper = JsonDocument.Parse(text);
-                if (wrapper.RootElement.ValueKind == JsonValueKind.Object
-                    && wrapper.RootElement.TryGetProperty("cases", out JsonElement cases)
-                    && cases.ValueKind == JsonValueKind.Array)
-                {
-                    return JsonSerializer.Deserialize<LocalLlmCaseDto[]>(cases.GetRawText(), options);
-                }
-                throw;
-            }
-        }
-
-        private static string NormalizeMultiline(string? value)
-        {
-            return (value ?? string.Empty).Replace("\r\n", "\n").Replace("\n", "\r\n").Trim();
-        }
-
-        private static string NormalizeCaseKey(string value)
-        {
-            return new string((value ?? string.Empty)
-                .Where(ch => !char.IsWhiteSpace(ch) && !char.IsPunctuation(ch))
-                .Select(char.ToLowerInvariant)
-                .ToArray());
-        }
-
         private static string TrimForMessage(string value)
         {
             string text = (value ?? string.Empty).Trim();
             return text.Length > 500 ? text[..500] + "..." : text;
-        }
-
-        private sealed class LocalLlmCaseDto
-        {
-            public string Id { get; set; } = string.Empty;
-            public string Title { get; set; } = string.Empty;
-            public string Preconditions { get; set; } = string.Empty;
-            public string Steps { get; set; } = string.Empty;
-            public string ExpectedResult { get; set; } = string.Empty;
-            public string Priority { get; set; } = string.Empty;
-            public string Type { get; set; } = string.Empty;
         }
     }
 }
