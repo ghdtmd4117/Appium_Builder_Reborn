@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -15,6 +16,7 @@ namespace AppiumBuilder.Core
     /// <summary>
     /// Appium Builder Reborn이 사용하는 로컬 AI(Ollama)의 준비/실행 상태를 관리한다.
     /// - 설치 프로그램 없이 standalone Ollama runtime을 앱에서 직접 내려받아 사용한다.
+    /// - 사용자가 Qwen3-VL 2B/4B 중 설치 모델을 직접 선택한다.
     /// - TC 내용은 localhost API에만 전달한다.
     /// - 앱이 시작한 Ollama process만 앱 종료 시 정리한다.
     /// </summary>
@@ -23,7 +25,23 @@ namespace AppiumBuilder.Core
         public const string Host = "127.0.0.1";
         public const int Port = 11434;
         public const string Endpoint = "http://127.0.0.1:11434";
-        public const string DefaultModel = "qwen3-vl:4b";
+        public const string DefaultModel = "qwen3-vl:2b";
+
+        public sealed record ModelOption(string Id, string DisplayName, string DownloadSize, string Description);
+
+        public static IReadOnlyList<ModelOption> SupportedModels { get; } = new[]
+        {
+            new ModelOption(
+                "qwen3-vl:2b",
+                "Qwen3-VL 2B · 경량",
+                "약 1.9GB",
+                "메모리 부담이 적은 Vision 모델 · 일반적인 TC/기획서/이미지 분석에 권장"),
+            new ModelOption(
+                "qwen3-vl:4b",
+                "Qwen3-VL 4B · 고품질",
+                "약 3.3GB",
+                "더 높은 분석 품질을 우선하는 Vision 모델 · 충분한 메모리 여유가 필요")
+        };
 
         // 재현 가능성과 supply-chain 검증을 위해 앱 버전에서 검증된 Ollama release를 고정한다.
         public const string OllamaVersion = "v0.32.5";
@@ -70,6 +88,42 @@ namespace AppiumBuilder.Core
             "AppiumBuilderReborn",
             "Ollama",
             "models");
+        public static string SettingsFolder => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AppiumBuilderReborn",
+            "TC");
+        public static string SelectedModelPath => Path.Combine(SettingsFolder, "selected-model.txt");
+
+        public static string SelectedModel => LoadSelectedModel();
+        public static bool HasSelectedModel => File.Exists(SelectedModelPath) && GetModelOption(LoadSelectedModel()) != null;
+
+        public static ModelOption? GetModelOption(string? model)
+        {
+            if (string.IsNullOrWhiteSpace(model)) return null;
+            return SupportedModels.FirstOrDefault(x => x.Id.Equals(model.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        public static void SetSelectedModel(string model)
+        {
+            ModelOption? option = GetModelOption(model);
+            if (option == null) throw new ArgumentException("지원하지 않는 로컬 AI 모델입니다.", nameof(model));
+            Directory.CreateDirectory(SettingsFolder);
+            File.WriteAllText(SelectedModelPath, option.Id, Encoding.UTF8);
+        }
+
+        private static string LoadSelectedModel()
+        {
+            try
+            {
+                if (!File.Exists(SelectedModelPath)) return string.Empty;
+                string value = File.ReadAllText(SelectedModelPath, Encoding.UTF8).Trim();
+                return GetModelOption(value)?.Id ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
 
         public static bool OwnsRunningServer
         {
@@ -85,11 +139,13 @@ namespace AppiumBuilder.Core
             bool ServerRunning,
             bool ModelAvailable,
             bool OwnsServer,
-            string RuntimePath)
+            string RuntimePath,
+            string SelectedModel,
+            bool ModelSelected)
         {
-            public bool Ready => ServerRunning && ModelAvailable;
+            public bool Ready => ModelSelected && ServerRunning && ModelAvailable;
             public bool NeedsRuntimeDownload => !RuntimeAvailable;
-            public bool NeedsModelDownload => ServerRunning && !ModelAvailable;
+            public bool NeedsModelDownload => ModelSelected && ServerRunning && !ModelAvailable;
         }
 
         public sealed record ProgressInfo(string Stage, string Detail, int? Percent = null);
@@ -99,12 +155,14 @@ namespace AppiumBuilder.Core
             string runtimePath = FindRuntimeExecutable() ?? string.Empty;
             bool runtimeAvailable = !string.IsNullOrWhiteSpace(runtimePath);
             bool serverRunning = await IsServerRunningAsync(cancellationToken).ConfigureAwait(false);
+            string selectedModel = SelectedModel;
+            bool modelSelected = !string.IsNullOrWhiteSpace(selectedModel);
             bool modelAvailable = false;
 
-            if (serverRunning)
-                modelAvailable = await HasModelAsync(DefaultModel, cancellationToken).ConfigureAwait(false);
+            if (serverRunning && modelSelected)
+                modelAvailable = await HasModelAsync(selectedModel, cancellationToken).ConfigureAwait(false);
 
-            return new Status(runtimeAvailable, serverRunning, modelAvailable, OwnsRunningServer, runtimePath);
+            return new Status(runtimeAvailable, serverRunning, modelAvailable, OwnsRunningServer, runtimePath, selectedModel, modelSelected);
         }
 
         /// <summary>
@@ -139,6 +197,11 @@ namespace AppiumBuilder.Core
                 if (!Environment.Is64BitOperatingSystem)
                     return (false, "내장 Ollama runtime은 64-bit Windows가 필요합니다.");
 
+                string model = SelectedModel;
+                ModelOption? option = GetModelOption(model);
+                if (option == null)
+                    return (false, "설치할 로컬 AI 모델을 먼저 선택해주세요.");
+
                 Directory.CreateDirectory(ModelsRoot);
 
                 string? runtime = FindRuntimeExecutable();
@@ -159,25 +222,25 @@ namespace AppiumBuilder.Core
                         return (false, "Ollama runtime은 준비됐지만 로컬 AI 서버를 시작하지 못했습니다.");
                 }
 
-                if (!await HasModelAsync(DefaultModel, cancellationToken).ConfigureAwait(false))
+                if (!await HasModelAsync(model, cancellationToken).ConfigureAwait(false))
                 {
                     progress?.Report(new ProgressInfo(
                         "model",
-                        $"{DefaultModel} 모델 다운로드 중 · 최초 1회 약 3.3GB"));
+                        $"{option.DisplayName} 모델 다운로드 중 · 최초 1회 {option.DownloadSize}"));
 
-                    bool pulled = await PullModelAsync(DefaultModel, cancellationToken).ConfigureAwait(false);
+                    bool pulled = await PullModelAsync(model, cancellationToken).ConfigureAwait(false);
                     if (!pulled)
-                        return (false, $"{DefaultModel} 모델 다운로드에 실패했습니다.");
+                        return (false, $"{option.DisplayName} 모델 다운로드에 실패했습니다.");
                 }
 
                 bool ready = await IsServerRunningAsync(cancellationToken).ConfigureAwait(false)
-                    && await HasModelAsync(DefaultModel, cancellationToken).ConfigureAwait(false);
+                    && await HasModelAsync(model, cancellationToken).ConfigureAwait(false);
 
                 if (!ready)
                     return (false, "로컬 AI 준비 확인에 실패했습니다.");
 
-                progress?.Report(new ProgressInfo("ready", $"로컬 AI 준비 완료 · {DefaultModel}", 100));
-                return (true, $"로컬 AI 준비 완료 · {DefaultModel}");
+                progress?.Report(new ProgressInfo("ready", $"로컬 AI 준비 완료 · {option.DisplayName}", 100));
+                return (true, $"로컬 AI 준비 완료 · {option.DisplayName}");
             }
             catch (OperationCanceledException)
             {
@@ -321,23 +384,27 @@ namespace AppiumBuilder.Core
 
                 long total = response.Content.Headers.ContentLength ?? RuntimeDownloadBytes;
                 await using Stream input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-                await using var output = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, useAsync: true);
 
-                byte[] buffer = new byte[1024 * 1024];
-                long received = 0;
-                int read;
-                while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false)) > 0)
+                // Windows에서 FileShare.None으로 열린 출력 스트림을 SHA 검사/압축 해제 단계가 다시 열면
+                // 자기 자신과 파일 잠금 충돌이 난다. 다운로드 스트림을 블록 안에서 완전히 닫은 뒤 다음 단계로 진행한다.
+                await using (var output = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, useAsync: true))
                 {
-                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-                    received += read;
-                    int percent = total > 0 ? (int)Math.Clamp(received * 100L / total, 0, 100) : 0;
-                    progress?.Report(new ProgressInfo(
-                        "runtime",
-                        $"Ollama runtime 다운로드 · {FormatBytes(received)} / {FormatBytes(total)}",
-                        percent));
-                }
+                    byte[] buffer = new byte[1024 * 1024];
+                    long received = 0;
+                    int read;
+                    while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false)) > 0)
+                    {
+                        await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                        received += read;
+                        int percent = total > 0 ? (int)Math.Clamp(received * 100L / total, 0, 100) : 0;
+                        progress?.Report(new ProgressInfo(
+                            "runtime",
+                            $"Ollama runtime 다운로드 · {FormatBytes(received)} / {FormatBytes(total)}",
+                            percent));
+                    }
 
-                await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
 
                 progress?.Report(new ProgressInfo("verify", "Ollama runtime 무결성 확인 중"));
                 string actualHash = await ComputeSha256Async(zipPath, cancellationToken).ConfigureAwait(false);
