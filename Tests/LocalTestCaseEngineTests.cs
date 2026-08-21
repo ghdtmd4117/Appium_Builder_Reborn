@@ -34,7 +34,9 @@ namespace AppiumBuilder.Tests
             Assert.Equal("github.com", LocalAiRuntimeManager.RuntimeDownloadUri.Host);
             Assert.Equal(Uri.UriSchemeHttps, LocalAiRuntimeManager.RuntimeDownloadUri.Scheme);
             Assert.Equal(64, LocalAiRuntimeManager.RuntimeSha256.Length);
-            Assert.Equal("qwen3-vl:4b", LocalAiRuntimeManager.DefaultModel);
+            Assert.Contains(LocalAiRuntimeManager.SupportedModels, x => x.Id == "qwen3-vl:2b");
+            Assert.Contains(LocalAiRuntimeManager.SupportedModels, x => x.Id == "qwen3-vl:4b");
+            Assert.Equal(2, LocalAiRuntimeManager.SupportedModels.Count);
         }
 
         [Fact]
