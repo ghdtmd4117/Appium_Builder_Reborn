@@ -37,6 +37,8 @@ namespace AppiumBuilder.Core
                 {
                     "PPTX" => $"{UnitCount} 슬라이드",
                     "PDF" => $"{UnitCount} 페이지",
+                    "DOCX" => "문서",
+                    "TEXT" => "텍스트",
                     _ => "이미지"
                 };
                 string image = Images.Count > 0 ? $" · 이미지 {Images.Count}개" : string.Empty;
@@ -51,6 +53,8 @@ namespace AppiumBuilder.Core
     /// 기획서 파일을 외부 서비스 없이 로컬에서 해석 가능한 형태로 변환한다.
     /// PPTX: 슬라이드 XML 텍스트 + 포함 이미지
     /// PDF : 페이지 텍스트 + 추출 가능한 포함 이미지
+    /// DOCX: 문서 XML 텍스트 + 포함 이미지
+    /// TXT/MD: 로컬 텍스트
     /// Image: 원본 이미지
     /// </summary>
     public static class LocalPlanningDocumentReader
@@ -69,6 +73,9 @@ namespace AppiumBuilder.Core
             string ext = Path.GetExtension(path ?? string.Empty);
             return ext.Equals(".pptx", StringComparison.OrdinalIgnoreCase)
                 || ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".docx", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".txt", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".md", StringComparison.OrdinalIgnoreCase)
                 || ImageExtensions.Contains(ext);
         }
 
@@ -76,7 +83,7 @@ namespace AppiumBuilder.Core
         {
             if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("기획서 경로가 비어 있습니다.", nameof(path));
             if (!File.Exists(path)) throw new FileNotFoundException("기획서 파일을 찾을 수 없습니다.", path);
-            if (!IsSupported(path)) throw new NotSupportedException("지원 형식은 PPTX, PDF, PNG/JPG/BMP/GIF 입니다.");
+            if (!IsSupported(path)) throw new NotSupportedException("지원 형식은 PPTX, PDF, DOCX, TXT/MD, PNG/JPG/BMP/GIF 입니다.");
 
             return Task.Run(() => Read(path, cancellationToken), cancellationToken);
         }
@@ -88,6 +95,8 @@ namespace AppiumBuilder.Core
             {
                 ".pptx" => ReadPptx(path, cancellationToken),
                 ".pdf" => ReadPdf(path, cancellationToken),
+                ".docx" => ReadDocx(path, cancellationToken),
+                ".txt" or ".md" => ReadText(path, cancellationToken),
                 _ => ReadImage(path, cancellationToken)
             };
         }
@@ -227,6 +236,68 @@ namespace AppiumBuilder.Core
                 ExtractedText = text.ToString().Trim(),
                 Images = images,
                 Warning = warning
+            };
+        }
+
+        private static LocalPlanningDocument ReadDocx(string path, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var text = new StringBuilder();
+            var images = new List<LocalDocumentImage>();
+            using ZipArchive archive = ZipFile.OpenRead(path);
+            ZipArchiveEntry? documentEntry = archive.GetEntry("word/document.xml");
+            if (documentEntry != null)
+            {
+                using Stream stream = documentEntry.Open();
+                XDocument xml = XDocument.Load(stream);
+                XNamespace word = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+                foreach (XElement paragraph in xml.Descendants(word + "p"))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    string line = string.Concat(paragraph.Descendants(word + "t").Select(x => x.Value));
+                    if (!string.IsNullOrWhiteSpace(line)) AppendLimited(text, line.Trim() + "\n", MaxTextCharsPerDocument);
+                }
+            }
+
+            foreach (ZipArchiveEntry media in archive.Entries
+                .Where(e => e.FullName.StartsWith("word/media/", StringComparison.OrdinalIgnoreCase)
+                    && ImageExtensions.Contains(Path.GetExtension(e.Name)))
+                .OrderBy(e => e.FullName))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (images.Count >= MaxImagesPerDocument) break;
+                if (media.Length <= 0 || media.Length > MaxImageBytes) continue;
+                using var ms = new MemoryStream();
+                using (Stream source = media.Open()) source.CopyTo(ms);
+                byte[] bytes = ms.ToArray();
+                if (!LooksLikeUsefulImage(bytes, allowSmall: false)) continue;
+                images.Add(new LocalDocumentImage { Name = media.Name, Bytes = bytes });
+            }
+
+            return new LocalPlanningDocument
+            {
+                SourcePath = path,
+                FileName = Path.GetFileName(path),
+                Kind = "DOCX",
+                UnitCount = 1,
+                ExtractedText = text.ToString().Trim(),
+                Images = images,
+                Warning = text.Length == 0 && images.Count == 0 ? "DOCX에서 분석 가능한 텍스트/이미지를 찾지 못했습니다." : string.Empty
+            };
+        }
+
+        private static LocalPlanningDocument ReadText(string path, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string text = File.ReadAllText(path, Encoding.UTF8);
+            if (text.Length > MaxTextCharsPerDocument) text = text[..MaxTextCharsPerDocument];
+            return new LocalPlanningDocument
+            {
+                SourcePath = path,
+                FileName = Path.GetFileName(path),
+                Kind = "TEXT",
+                UnitCount = 1,
+                ExtractedText = text.Trim()
             };
         }
 

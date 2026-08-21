@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using System.IO.Compression;
+using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using AppiumBuilder.Core;
 using Xunit;
@@ -22,12 +24,10 @@ namespace AppiumBuilder.Tests
             Assert.Equal(expected, LocalOnlyLlmClient.IsLoopbackEndpoint(endpoint));
         }
 
-
         [Fact]
         public void EmbeddedLocalAiRuntime_UsesPinnedOfficialAndLoopbackConfiguration()
         {
             var endpoint = new Uri(LocalAiRuntimeManager.Endpoint);
-
             Assert.True(endpoint.IsLoopback);
             Assert.Equal("127.0.0.1", endpoint.Host);
             Assert.Equal(11434, endpoint.Port);
@@ -38,45 +38,26 @@ namespace AppiumBuilder.Tests
         }
 
         [Fact]
-        public void RuleDraft_CreatesPositiveNegativeAndBoundaryCases()
-        {
-            var cases = LocalTestCaseEngine.BuildRuleBasedDraft("로그인 기능");
-
-            Assert.Equal(3, cases.Count);
-            Assert.Contains(cases, x => x.Type == "Positive");
-            Assert.Contains(cases, x => x.Type == "Negative");
-            Assert.Contains(cases, x => x.Type == "Boundary");
-        }
-
-        [Fact]
-        public void CsvExport_PreservesTemplateHeaderAndMapsKnownColumns()
+        public void ExistingTcCsv_LearnsArbitraryColumnsWithoutFixedSchema()
         {
             string folder = Path.Combine(Path.GetTempPath(), "AppiumBuilderTests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(folder);
-            string path = Path.Combine(folder, "tc.csv");
+            string path = Path.Combine(folder, "team_tc.csv");
             try
             {
-                var template = new LocalTestCaseTemplate
-                {
-                    Name = "custom.csv",
-                    Columns = new[] { "Test Case ID", "제목", "사전조건", "테스트 절차", "기대결과", "담당자" }
-                };
-                var testCase = new LocalTestCase
-                {
-                    Id = "TC-007",
-                    Title = "정상 로그인",
-                    Preconditions = "계정 준비",
-                    Steps = "1. ID 입력\n2. 로그인",
-                    ExpectedResult = "홈 화면 표시"
-                };
+                File.WriteAllText(path,
+                    "Case No,기능분류,검증 포인트,Result Note\r\n" +
+                    "A-001,로그인,정상 계정으로 로그인,홈 진입\r\n" +
+                    "A-002,로그인,잠금 계정 로그인,잠금 안내\r\n",
+                    new UTF8Encoding(true));
 
-                LocalTestCaseEngine.ExportCsv(path, template, new[] { testCase });
-                string content = File.ReadAllText(path, Encoding.UTF8);
+                TcExampleSet set = LocalTestCaseEngine.ReadExampleSet(path);
 
-                Assert.Contains("Test Case ID,제목,사전조건,테스트 절차,기대결과,담당자", content);
-                Assert.Contains("TC-007", content);
-                Assert.Contains("정상 로그인", content);
-                Assert.Contains("홈 화면 표시", content);
+                Assert.Equal(new[] { "Case No", "기능분류", "검증 포인트", "Result Note" }, set.Columns);
+                Assert.Equal(2, set.TotalRowCount);
+                Assert.Equal("A-001", set.Rows[0]["Case No"]);
+                Assert.DoesNotContain("사전조건", set.Columns);
+                Assert.DoesNotContain("우선순위", set.Columns);
             }
             finally
             {
@@ -84,6 +65,50 @@ namespace AppiumBuilder.Tests
             }
         }
 
+        [Fact]
+        public void CsvExport_PreservesDynamicProjectColumnsExactly()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "AppiumBuilderTests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            string path = Path.Combine(folder, "tc.csv");
+            try
+            {
+                string[] columns = { "No", "시나리오", "체크사항", "비고" };
+                var row = new DynamicTestCase
+                {
+                    Fields = new Dictionary<string, string>
+                    {
+                        ["No"] = "1",
+                        ["시나리오"] = "회원가입",
+                        ["체크사항"] = "약관 동의 후 완료",
+                        ["비고"] = "모바일"
+                    }
+                };
+
+                LocalTestCaseEngine.ExportCsv(path, columns, new[] { row });
+                string content = File.ReadAllText(path, Encoding.UTF8);
+
+                Assert.Contains("No,시나리오,체크사항,비고", content);
+                Assert.Contains("회원가입", content);
+                Assert.DoesNotContain("우선순위", content);
+            }
+            finally
+            {
+                try { Directory.Delete(folder, true); } catch { }
+            }
+        }
+
+        [Fact]
+        public void CanonicalColumns_PrefersMostCommonObservedProjectSchema()
+        {
+            var a = new TcExampleSet { Columns = new[] { "A", "B", "C" }, TotalRowCount = 10 };
+            var b = new TcExampleSet { Columns = new[] { "X", "Y" }, TotalRowCount = 20 };
+            var c = new TcExampleSet { Columns = new[] { "A", "B", "C" }, TotalRowCount = 5 };
+
+            IReadOnlyList<string> columns = LocalTestCaseEngine.ChooseCanonicalColumns(new[] { a, b, c });
+
+            Assert.Equal(new[] { "A", "B", "C" }, columns);
+        }
 
         [Fact]
         public async Task PlanningDocumentReader_ExtractsPptxSlideTextLocally()
@@ -102,7 +127,6 @@ namespace AppiumBuilder.Tests
                 }
 
                 LocalPlanningDocument document = await LocalPlanningDocumentReader.ReadAsync(path);
-
                 Assert.Equal("PPTX", document.Kind);
                 Assert.Equal(1, document.UnitCount);
                 Assert.Contains("로그인 화면", document.ExtractedText);
@@ -117,10 +141,12 @@ namespace AppiumBuilder.Tests
         [Theory]
         [InlineData("plan.pptx", true)]
         [InlineData("plan.pdf", true)]
+        [InlineData("guide.docx", true)]
+        [InlineData("rules.txt", true)]
+        [InlineData("rules.md", true)]
         [InlineData("screen.png", true)]
         [InlineData("screen.jpg", true)]
         [InlineData("legacy.ppt", false)]
-        [InlineData("plan.docx", false)]
         public void PlanningDocumentReader_RecognizesSupportedFormats(string fileName, bool expected)
         {
             Assert.Equal(expected, LocalPlanningDocumentReader.IsSupported(fileName));
