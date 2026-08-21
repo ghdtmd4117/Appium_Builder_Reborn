@@ -6,19 +6,31 @@ using System.Text.Json;
 
 namespace AppiumBuilder.Core
 {
-    public sealed class TcGenerationGuide
+    public sealed class TcLearningProfile
     {
-        public string Name { get; set; } = "기본 가이드";
-        public string Rules { get; set; } = string.Empty;
-        public string TemplateName { get; set; } = "기본 TC 양식";
-        public List<string> TemplateColumns { get; set; } = LocalTestCaseTemplate.DefaultColumns.ToList();
+        public string Name { get; set; } = "기본 프로필";
+        public string ManualRules { get; set; } = string.Empty;
+        public List<string> LearnedColumns { get; set; } = new();
+        public string LearnedRuleSummary { get; set; } = string.Empty;
+        public string LearnedStyleGuide { get; set; } = string.Empty;
+        public string LearnedCoverageGuide { get; set; } = string.Empty;
+        public List<string> LearnedWarnings { get; set; } = new();
+        public List<string> LearningSourceNames { get; set; } = new();
+        public List<Dictionary<string, string>> RepresentativeExamples { get; set; } = new();
         public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+
+        public bool HasLearning => LearnedColumns.Count > 0
+            || !string.IsNullOrWhiteSpace(LearnedRuleSummary)
+            || !string.IsNullOrWhiteSpace(LearnedStyleGuide)
+            || RepresentativeExamples.Count > 0;
     }
 
     /// <summary>
-    /// 회사/프로젝트별 TC 작성 규칙을 로컬 PC에만 저장한다.
+    /// 회사/팀/프로젝트별 TC 작성 방식을 로컬 PC에만 저장한다.
+    /// 모델 파라미터를 재학습하는 대신, 학습 자료에서 추출한 스키마/규칙/스타일/예시를
+    /// 프로젝트 프로필로 누적하고 TC 생성 때마다 로컬 모델에 컨텍스트로 제공한다.
     /// </summary>
-    public static class TcGenerationGuideStore
+    public static class TcLearningProfileStore
     {
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -26,102 +38,194 @@ namespace AppiumBuilder.Core
             PropertyNameCaseInsensitive = true
         };
 
+        private static readonly string[] LegacyDefaultColumns =
+        {
+            "TC ID", "제목", "사전조건", "테스트 절차", "기대결과", "우선순위", "유형"
+        };
+
         public static string StoreFolder => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "AppiumBuilderReborn",
             "TC");
 
-        public static string StorePath => Path.Combine(StoreFolder, "tc_generation_guides.json");
+        public static string StorePath => Path.Combine(StoreFolder, "tc_learning_profiles.json");
+        private static string LegacyStorePath => Path.Combine(StoreFolder, "tc_generation_guides.json");
 
-        public static IReadOnlyList<TcGenerationGuide> Load()
+        public static IReadOnlyList<TcLearningProfile> Load()
         {
             try
             {
-                if (!File.Exists(StorePath)) return new[] { CreateDefault() };
-                string json = File.ReadAllText(StorePath);
-                List<TcGenerationGuide>? guides = JsonSerializer.Deserialize<List<TcGenerationGuide>>(json, JsonOptions);
-                if (guides == null || guides.Count == 0) return new[] { CreateDefault() };
+                if (File.Exists(StorePath))
+                {
+                    string json = File.ReadAllText(StorePath);
+                    List<TcLearningProfile>? profiles = JsonSerializer.Deserialize<List<TcLearningProfile>>(json, JsonOptions);
+                    if (profiles is { Count: > 0 })
+                    {
+                        return profiles
+                            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+                            .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
+                            .ToArray();
+                    }
+                }
 
-                return guides
-                    .Where(x => !string.IsNullOrWhiteSpace(x.Name))
-                    .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
-                    .ToArray();
+                IReadOnlyList<TcLearningProfile> migrated = TryMigrateLegacy();
+                if (migrated.Count > 0)
+                {
+                    Persist(migrated);
+                    return migrated;
+                }
             }
             catch
             {
-                return new[] { CreateDefault() };
+                // 손상된 프로필은 기본 프로필로 안전하게 시작한다.
             }
+
+            return new[] { CreateDefault() };
         }
 
-        public static void SaveOrUpdate(
-            string name,
-            string rules,
-            string? templateName = null,
-            IReadOnlyList<string>? templateColumns = null)
+        public static void SaveOrUpdate(TcLearningProfile profile)
         {
-            name = (name ?? string.Empty).Trim();
+            ArgumentNullException.ThrowIfNull(profile);
+            string name = (profile.Name ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(name))
-                throw new ArgumentException("가이드 이름을 입력해주세요.", nameof(name));
+                throw new ArgumentException("프로필 이름을 입력해주세요.", nameof(profile));
 
-            var guides = Load().ToList();
-            TcGenerationGuide? existing = guides.FirstOrDefault(x =>
-                x.Name.Equals(name, StringComparison.CurrentCultureIgnoreCase));
+            var profiles = Load().ToList();
+            int index = profiles.FindIndex(x => x.Name.Equals(name, StringComparison.CurrentCultureIgnoreCase));
 
-            if (existing == null)
-            {
-                guides.Add(new TcGenerationGuide
-                {
-                    Name = name,
-                    Rules = rules ?? string.Empty,
-                    TemplateName = string.IsNullOrWhiteSpace(templateName) ? "기본 TC 양식" : templateName.Trim(),
-                    TemplateColumns = (templateColumns == null || templateColumns.Count == 0 ? LocalTestCaseTemplate.DefaultColumns : templateColumns).ToList(),
-                    UpdatedAtUtc = DateTime.UtcNow
-                });
-            }
-            else
-            {
-                existing.Name = name;
-                existing.Rules = rules ?? string.Empty;
-                existing.TemplateName = string.IsNullOrWhiteSpace(templateName) ? existing.TemplateName : templateName.Trim();
-                existing.TemplateColumns = (templateColumns == null || templateColumns.Count == 0 ? existing.TemplateColumns : templateColumns).ToList();
-                existing.UpdatedAtUtc = DateTime.UtcNow;
-            }
+            profile.Name = name;
+            profile.ManualRules ??= string.Empty;
+            profile.LearnedColumns = DistinctColumns(profile.LearnedColumns);
+            profile.LearnedWarnings ??= new List<string>();
+            profile.LearningSourceNames = (profile.LearningSourceNames ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.CurrentCultureIgnoreCase)
+                .Take(50)
+                .ToList();
+            profile.RepresentativeExamples = NormalizeExamples(profile.RepresentativeExamples, profile.LearnedColumns);
+            profile.UpdatedAtUtc = DateTime.UtcNow;
 
-            Persist(guides);
+            if (index >= 0) profiles[index] = profile;
+            else profiles.Add(profile);
+
+            Persist(profiles);
         }
 
         public static bool Delete(string name)
         {
             if (string.IsNullOrWhiteSpace(name)) return false;
-            var guides = Load().ToList();
-            int removed = guides.RemoveAll(x => x.Name.Equals(name.Trim(), StringComparison.CurrentCultureIgnoreCase));
+            var profiles = Load().ToList();
+            int removed = profiles.RemoveAll(x => x.Name.Equals(name.Trim(), StringComparison.CurrentCultureIgnoreCase));
             if (removed == 0) return false;
-            if (guides.Count == 0) guides.Add(CreateDefault());
-            Persist(guides);
+            if (profiles.Count == 0) profiles.Add(CreateDefault());
+            Persist(profiles);
             return true;
         }
 
-        private static void Persist(IEnumerable<TcGenerationGuide> guides)
+        public static TcLearningProfile CreateDefault() => new()
+        {
+            Name = "기본 프로필",
+            ManualRules =
+                "- 제공된 기획서/예시 TC/직접 입력 규칙을 가장 우선해서 따른다.\r\n" +
+                "- 자료에 없는 정책, 수치, 화면 동작을 임의로 확정하지 않는다.\r\n" +
+                "- 기존 TC 예시가 있으면 컬럼명, 문장 톤, 상세 수준, 표기 방식을 최대한 동일하게 맞춘다."
+        };
+
+        private static IReadOnlyList<TcLearningProfile> TryMigrateLegacy()
+        {
+            if (!File.Exists(LegacyStorePath)) return Array.Empty<TcLearningProfile>();
+            try
+            {
+                string json = File.ReadAllText(LegacyStorePath);
+                List<LegacyGuide>? legacy = JsonSerializer.Deserialize<List<LegacyGuide>>(json, JsonOptions);
+                if (legacy == null || legacy.Count == 0) return Array.Empty<TcLearningProfile>();
+
+                return legacy
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+                    .Select(x => new TcLearningProfile
+                    {
+                        Name = x.Name.Trim(),
+                        ManualRules = x.Rules ?? string.Empty,
+                        // 이전 기본 7컬럼은 더 이상 강제하지 않는다. 사용자가 만든 커스텀 컬럼만 마이그레이션한다.
+                        LearnedColumns = IsLegacyDefault(x.TemplateColumns)
+                            ? new List<string>()
+                            : DistinctColumns(x.TemplateColumns),
+                        LearnedRuleSummary = "이전 TC 생성 가이드에서 마이그레이션됨",
+                        LearningSourceNames = new List<string> { "Legacy TC Guide" },
+                        UpdatedAtUtc = DateTime.UtcNow
+                    })
+                    .ToArray();
+            }
+            catch
+            {
+                return Array.Empty<TcLearningProfile>();
+            }
+        }
+
+        private static bool IsLegacyDefault(IReadOnlyList<string>? columns)
+        {
+            if (columns == null || columns.Count != LegacyDefaultColumns.Length) return false;
+            return columns.Select(x => x.Trim()).SequenceEqual(LegacyDefaultColumns, StringComparer.CurrentCultureIgnoreCase);
+        }
+
+        private static List<string> DistinctColumns(IEnumerable<string>? columns)
+        {
+            var result = new List<string>();
+            if (columns == null) return result;
+            foreach (string column in columns)
+            {
+                string value = (column ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(value)) continue;
+                if (result.Any(x => x.Equals(value, StringComparison.CurrentCultureIgnoreCase))) continue;
+                result.Add(value);
+                if (result.Count >= 40) break;
+            }
+            return result;
+        }
+
+        private static List<Dictionary<string, string>> NormalizeExamples(
+            IEnumerable<Dictionary<string, string>>? examples,
+            IReadOnlyList<string> columns)
+        {
+            var result = new List<Dictionary<string, string>>();
+            if (examples == null) return result;
+
+            foreach (Dictionary<string, string> example in examples.Take(8))
+            {
+                var row = new Dictionary<string, string>(StringComparer.CurrentCultureIgnoreCase);
+                IEnumerable<string> keys = columns.Count > 0 ? columns : example.Keys;
+                foreach (string key in keys)
+                {
+                    if (example.TryGetValue(key, out string? value))
+                        row[key] = Limit(value, 2000);
+                }
+                if (row.Count > 0) result.Add(row);
+            }
+            return result;
+        }
+
+        private static string Limit(string? value, int max)
+        {
+            string text = value ?? string.Empty;
+            return text.Length <= max ? text : text[..max];
+        }
+
+        private static void Persist(IEnumerable<TcLearningProfile> profiles)
         {
             Directory.CreateDirectory(StoreFolder);
             string temp = StorePath + ".tmp";
-            string json = JsonSerializer.Serialize(guides.OrderBy(x => x.Name).ToArray(), JsonOptions);
+            string json = JsonSerializer.Serialize(profiles.OrderBy(x => x.Name).ToArray(), JsonOptions);
             File.WriteAllText(temp, json);
             File.Move(temp, StorePath, overwrite: true);
         }
 
-        private static TcGenerationGuide CreateDefault() => new()
+        private sealed class LegacyGuide
         {
-            Name = "기본 가이드",
-            TemplateName = "기본 TC 양식",
-            TemplateColumns = LocalTestCaseTemplate.DefaultColumns.ToList(),
-            Rules =
-                "- 요구사항/기획서에 근거해서만 TC를 작성한다.\r\n" +
-                "- 정상, 예외, 경계값 케이스를 기능에 맞게 포함한다.\r\n" +
-                "- 사전조건은 실행 전에 필요한 상태를 구체적으로 작성한다.\r\n" +
-                "- 테스트 절차는 번호형으로 실행 가능하게 작성한다.\r\n" +
-                "- 기대결과는 관찰 가능한 결과로 명확하게 작성한다.\r\n" +
-                "- 기획서에 없는 정책을 임의로 단정하지 말고 필요한 경우 확인 필요로 표시한다."
-        };
+            public string Name { get; set; } = string.Empty;
+            public string Rules { get; set; } = string.Empty;
+            public string TemplateName { get; set; } = string.Empty;
+            public List<string> TemplateColumns { get; set; } = new();
+        }
     }
 }

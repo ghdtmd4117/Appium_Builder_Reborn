@@ -21,5 +21,6 @@
   <ItemGroup>
     <Compile Remove="Tests\**\*.cs" />
     <Compile Remove="showcase\**\*.cs" />
+    <Compile Remove="LocalTcServer\**\*.cs" />
   </ItemGroup>
 </Project>
