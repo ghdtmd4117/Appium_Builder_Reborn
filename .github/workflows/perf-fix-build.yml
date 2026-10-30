@@ -1,0 +1,96 @@
+name: Performance Fix Windows Build
+
+on:
+  push:
+    branches:
+      - agent/ui-performance-startup-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-fix-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Reconstruct performance-fix source
+        shell: pwsh
+        run: |
+          $parts = @(
+            '.build/src/chunk_00',
+            '.build/src/chunk_01',
+            '.build/src/chunk_02',
+            '.build/src/chunk_03',
+            '.build/src/rem_00',
+            '.build/src/r01_0',
+            '.build/src/r01_1',
+            '.build/src/r02_0',
+            '.build/src/r02_1',
+            '.build/src/rem_03',
+            '.build/src/rem_04',
+            '.build/src/rem_05',
+            '.build/src/rem_06',
+            '.build/src/rem_07',
+            '.build/src/rem_08'
+          )
+          $b64 = ''
+          foreach ($part in $parts) {
+            if (-not (Test-Path $part)) { throw "Missing payload part: $part" }
+            $b64 += ([IO.File]::ReadAllText($part)).Trim()
+          }
+          if ($b64.Length -ne 187760) {
+            throw "Unexpected base64 payload length: $($b64.Length)"
+          }
+
+          New-Item -ItemType Directory -Force '.build/work' | Out-Null
+          [IO.File]::WriteAllBytes('.build/perf_source.tar.xz', [Convert]::FromBase64String($b64))
+
+          $hash = (Get-FileHash '.build/perf_source.tar.xz' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne 'c132e17a6b5e99e6124c405c5f051faf19111484ba4e42e9eb43a1370a34edb9') {
+            throw "Payload SHA-256 mismatch: $hash"
+          }
+
+          tar -xf '.build/perf_source.tar.xz' -C '.build/work'
+          if (-not (Test-Path '.build/work/AppiumBuilder.csproj')) {
+            throw 'AppiumBuilder.csproj was not reconstructed.'
+          }
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore .build/work/AppiumBuilder.slnx
+
+      - name: Build Release
+        shell: pwsh
+        run: dotnet build .build/work/AppiumBuilder.slnx --configuration Release --no-restore
+
+      - name: Test
+        shell: pwsh
+        run: dotnet test .build/work/Tests/AppiumBuilder.Tests.csproj --configuration Release --no-build --logger "console;verbosity=normal"
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = '.build/work/bin/Release/net8.0-windows/AppiumBuilder.exe'
+          if (-not (Test-Path $exe)) { throw "Missing built executable: $exe" }
+          Get-ChildItem '.build/work/bin/Release/net8.0-windows' | Select-Object Name, Length
+
+      - name: Upload Release bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppiumBuilder-PerformanceFix-bin
+          path: .build/work/bin/Release/net8.0-windows/**
+          if-no-files-found: error
+          retention-days: 7
