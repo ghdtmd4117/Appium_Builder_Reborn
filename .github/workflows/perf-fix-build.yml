@@ -30,28 +30,9 @@ jobs:
       - name: Reconstruct performance-fix source
         shell: pwsh
         run: |
-          $parts = @(
-            '.build/src/chunk_00',
-            '.build/src/chunk_01',
-            '.build/src/chunk_02',
-            '.build/src/chunk_03',
-            '.build/src/rem_00',
-            '.build/src/r01_0',
-            '.build/src/r01_1',
-            '.build/src/r02_0',
-            '.build/src/r02_1',
-            '.build/src/rem_03',
-            '.build/src/rem_04',
-            '.build/src/rem_05',
-            '.build/src/rem_06',
-            '.build/src/rem_07',
-            '.build/src/rem_08'
-          )
-          $b64 = ''
-          foreach ($part in $parts) {
-            if (-not (Test-Path $part)) { throw "Missing payload part: $part" }
-            $b64 += ([IO.File]::ReadAllText($part)).Trim()
-          }
+          $payload = '.build/perf_source.b64'
+          if (-not (Test-Path $payload)) { throw "Missing payload: $payload" }
+          $b64 = ([IO.File]::ReadAllText($payload)).Trim()
           if ($b64.Length -ne 187760) {
             throw "Unexpected base64 payload length: $($b64.Length)"
           }
